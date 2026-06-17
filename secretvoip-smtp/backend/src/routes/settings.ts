@@ -41,7 +41,7 @@ settingsRouter.patch('/', requireAuth, requirePasswordOk, requireRole('admin'), 
   if (fields.length) {
     await query(`UPDATE settings SET ${fields.join(',')}, updated_at=now() WHERE id=1`, vals);
   }
-  await audit(req, 'settings.update', null, v);
+  await audit(req, 'settings.update', undefined, v);
   res.json({ ok: true, quota: await getGlobalQuota() });
 });
 
@@ -56,6 +56,6 @@ settingsRouter.post('/quota/reset', requireAuth, requirePasswordOk, requireRole(
 settingsRouter.post('/quota', requireAuth, requirePasswordOk, requireRole('admin'), async (req, res) => {
   const v = z.object({ total: z.number().int().min(0).max(10_000_000_000) }).parse(req.body);
   await setGlobalQuotaTotal(v.total);
-  await audit(req, 'settings.quota_set', null, v);
+  await audit(req, 'settings.quota_set', undefined, v);
   res.json({ ok: true, quota: await getGlobalQuota() });
 });
