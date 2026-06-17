@@ -5,7 +5,7 @@ import { bullConnection } from './redis';
 import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
-import { incrementUsage } from './lib/quota';
+import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
 
 // Simple per-user, per-day rotation index for SMTP selection.
 const rotationCursor = new Map<string, number>();
@@ -97,6 +97,19 @@ async function handleJob(job: Job<SendJob>) {
     last_name: r.last_name ?? '',
     company: r.company ?? '',
   };
+
+  // Global shared quota: reserve before sending. If exhausted, requeue with delay.
+  const gq = await getGlobalQuota();
+  if (gq.active) {
+    const ok = await reserveGlobalQuota(1);
+    if (!ok) {
+      await query(
+        `UPDATE campaign_recipients SET status='queued', error='global_quota_exhausted', updated_at=now() WHERE id=$1`,
+        [recipientId]
+      );
+      throw Object.assign(new Error('global_quota_exhausted'), { retryAfterMs: 60_000 });
+    }
+  }
 
   const startedAt = Date.now();
   try {
