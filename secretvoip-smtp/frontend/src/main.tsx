@@ -21,6 +21,7 @@ import AdminUsers from './pages/AdminUsers';
 import AdminClientDetails from './pages/AdminClientDetails';
 import AuditLogs from './pages/AuditLogs';
 import Templates from './pages/Templates';
+import AdminDiagnostics from './pages/AdminDiagnostics';
 import './index.css';
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '');
