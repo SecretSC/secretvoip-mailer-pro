@@ -6,8 +6,9 @@ export class ApiError extends Error {
   status: number;
   code?: string;
   detail?: unknown;
-  constructor(status: number, message: string, code?: string, detail?: unknown) {
-    super(message); this.status = status; this.code = code; this.detail = detail;
+  network?: boolean;
+  constructor(status: number, message: string, code?: string, detail?: unknown, network = false) {
+    super(message); this.status = status; this.code = code; this.detail = detail; this.network = network;
   }
 }
 
@@ -18,6 +19,21 @@ function getToken(): string | null {
 export function setToken(t: string | null) {
   if (t) localStorage.setItem('svp_token', t);
   else localStorage.removeItem('svp_token');
+}
+
+// Connection-state listeners (so the UI can show "Reconnecting…" without logging out).
+type ConnListener = (online: boolean) => void;
+const connListeners = new Set<ConnListener>();
+let lastOnline = true;
+export function onConnectionChange(fn: ConnListener) {
+  connListeners.add(fn);
+  fn(lastOnline);
+  return () => connListeners.delete(fn);
+}
+function setOnline(v: boolean) {
+  if (v === lastOnline) return;
+  lastOnline = v;
+  for (const l of connListeners) { try { l(v); } catch {} }
 }
 
 export async function api<T = any>(
@@ -41,14 +57,33 @@ export async function api<T = any>(
     body = JSON.stringify(opts.body);
   }
 
-  const res = await fetch(url.toString(), { method: opts.method ?? 'GET', headers, body });
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), { method: opts.method ?? 'GET', headers, body });
+  } catch (e: any) {
+    // Network / CORS / proxy hiccup — DO NOT log the user out.
+    setOnline(false);
+    throw new ApiError(0, 'connection_lost', 'network_error', null, true);
+  }
+  setOnline(true);
+
+  // 502/503/504 = upstream blip; treat as transient — keep the user logged in.
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    setOnline(false);
+    throw new ApiError(res.status, 'service_unavailable', 'service_unavailable', null, true);
+  }
+
   const text = await res.text();
   const data = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
+
   if (!res.ok) {
     const code = (data && typeof data === 'object' && 'error' in data) ? (data as any).error : undefined;
-    // Force re-login only on real 401s with no token; do NOT log out on transient errors
-    if (res.status === 401 && tok && code !== 'invalid_credentials') {
-      // token expired or revoked
+    // ONLY force re-login on a true auth failure with our token (expired / revoked / invalid).
+    if (
+      res.status === 401 &&
+      tok &&
+      (code === 'unauthorized' || code === 'token_expired' || code === 'invalid_token')
+    ) {
       setToken(null);
       window.location.assign(`${import.meta.env.BASE_URL}login`);
     }
