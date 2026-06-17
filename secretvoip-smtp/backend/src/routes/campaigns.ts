@@ -4,21 +4,45 @@ import { query, tx } from '../db';
 import { requireAuth, requirePasswordOk } from '../auth/middleware';
 import { audit } from '../lib/audit';
 import { campaignQueue } from '../queue';
-import { getQuota } from '../lib/quota';
 import { buildTransport, renderTemplate } from '../lib/mailer';
 
 export const campaignsRouter = Router();
 campaignsRouter.use(requireAuth, requirePasswordOk);
 
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+function parseRecipients(input: string[] | undefined): { valid: string[]; invalid: string[]; duplicates: number } {
+  if (!input || !input.length) return { valid: [], invalid: [], duplicates: 0 };
+  const seen = new Set<string>();
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  let duplicates = 0;
+  for (const raw of input) {
+    const e = String(raw ?? '').trim().toLowerCase();
+    if (!e) continue;
+    if (seen.has(e)) { duplicates++; continue; }
+    seen.add(e);
+    if (EMAIL_RE.test(e)) valid.push(e);
+    else invalid.push(e);
+  }
+  return { valid, invalid, duplicates };
+}
+
+// Augment campaign rows with `accepted` alias of delivered for back-compat
+function withAccepted<T extends Record<string, any>>(c: T) {
+  if (!c) return c;
+  return { ...c, accepted: c.accepted ?? c.delivered ?? 0 };
+}
+
 // --- list ---
 campaignsRouter.get('/', async (req, res) => {
   const { rows } = await query(
-    `SELECT id, name, subject, status, total, sent, delivered, failed, bounced, invalid,
+    `SELECT id, name, subject, from_name, status, total, sent, accepted, delivered, failed, bounced, invalid,
             started_at, completed_at, created_at, updated_at
-       FROM campaigns WHERE user_id=$1 ORDER BY created_at DESC LIMIT 200`,
+       FROM campaigns WHERE user_id=$1 ORDER BY created_at DESC LIMIT 500`,
     [req.user!.sub]
   );
-  res.json({ campaigns: rows });
+  res.json({ campaigns: rows.map(withAccepted) });
 });
 
 // --- get one ---
@@ -30,26 +54,27 @@ campaignsRouter.get('/:id', async (req, res) => {
   const c = rows[0];
   if (!c) return res.status(404).json({ error: 'not_found' });
 
-  // live counts
   const { rows: counts } = await query<{ status: string; n: string }>(
     `SELECT status, COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1 GROUP BY status`,
     [req.params.id]
   );
   const breakdown: Record<string, number> = {
-    queued: 0, processing: 0, delivered: 0, failed: 0, bounced: 0, invalid: 0, delayed: 0, cancelled: 0,
+    queued: 0, processing: 0, delivered: 0, accepted: 0, failed: 0, bounced: 0, invalid: 0, delayed: 0, cancelled: 0,
   };
   for (const r of counts) breakdown[r.status] = parseInt(r.n, 10);
-  res.json({ campaign: c, breakdown });
+  breakdown.accepted = breakdown.delivered; // surface "accepted" terminology
+  res.json({ campaign: withAccepted(c), breakdown });
 });
 
 // --- recipients page ---
 campaignsRouter.get('/:id/recipients', async (req, res) => {
   const status = req.query.status as string | undefined;
   const { rows } = await query(
-    `SELECT id, email, first_name, last_name, company, status, smtp_id, error, attempts, sent_at, updated_at
+    `SELECT id, email, first_name, last_name, company, status, smtp_id, error,
+            attempts, sent_at, updated_at, smtp_response, message_id
        FROM campaign_recipients
       WHERE campaign_id=$1 AND ($2::text IS NULL OR status=$2)
-      ORDER BY updated_at DESC LIMIT 1000`,
+      ORDER BY updated_at DESC LIMIT 2000`,
     [req.params.id, status ?? null]
   );
   res.json({ recipients: rows });
@@ -59,21 +84,53 @@ campaignsRouter.get('/:id/recipients', async (req, res) => {
 const upsertSchema = z.object({
   name: z.string().min(1).max(200),
   subject: z.string().min(1).max(500),
-  html: z.string().max(500_000).default(''),
-  text: z.string().max(200_000).default(''),
-  list_id: z.string().uuid().optional(),
+  from_name: z.string().max(200).optional().nullable(),
+  html: z.string().max(2_000_000).default(''),
+  text: z.string().max(500_000).default(''),
+  list_id: z.string().uuid().optional(), // legacy — still supported
   smtp_ids: z.array(z.string().uuid()).default([]),
+  recipients: z.array(z.string()).max(2_000_000).optional(),
 });
+
+async function insertRecipients(campaignId: string, emails: string[]) {
+  if (!emails.length) return 0;
+  // Batch insert in chunks to avoid huge single statements
+  const CHUNK = 1000;
+  let inserted = 0;
+  for (let i = 0; i < emails.length; i += CHUNK) {
+    const slice = emails.slice(i, i + CHUNK);
+    const values = slice.map((_, j) => `($1, $${j + 2}, 'queued')`).join(',');
+    await query(
+      `INSERT INTO campaign_recipients (campaign_id, email, status) VALUES ${values}`,
+      [campaignId, ...slice]
+    );
+    inserted += slice.length;
+  }
+  return inserted;
+}
 
 campaignsRouter.post('/', async (req, res) => {
   const v = upsertSchema.parse(req.body);
+  const parsed = parseRecipients(v.recipients);
   const { rows } = await query<{ id: string }>(
-    `INSERT INTO campaigns (user_id, name, subject, html, text, list_id, smtp_ids)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [req.user!.sub, v.name, v.subject, v.html, v.text, v.list_id ?? null, v.smtp_ids]
+    `INSERT INTO campaigns (user_id, name, subject, from_name, html, text, list_id, smtp_ids)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    [req.user!.sub, v.name, v.subject, v.from_name ?? null, v.html, v.text, v.list_id ?? null, v.smtp_ids]
   );
-  await audit(req, 'campaigns.create', rows[0].id, { name: v.name });
-  res.status(201).json({ id: rows[0].id });
+  const id = rows[0].id;
+  if (parsed.valid.length) {
+    await insertRecipients(id, parsed.valid);
+    await query(`UPDATE campaigns SET total=$1, updated_at=now() WHERE id=$2`, [parsed.valid.length, id]);
+  }
+  await audit(req, 'campaigns.create', id, { name: v.name, recipients: parsed.valid.length });
+  res.status(201).json({
+    id,
+    recipients: {
+      valid: parsed.valid.length,
+      invalid: parsed.invalid.length,
+      duplicates: parsed.duplicates,
+    },
+  });
 });
 
 campaignsRouter.patch('/:id', async (req, res) => {
@@ -81,23 +138,73 @@ campaignsRouter.patch('/:id', async (req, res) => {
   const fields: string[] = []; const vals: any[] = [];
   for (const [k, val] of Object.entries(v)) {
     if (val === undefined) continue;
+    if (k === 'recipients') continue; // handled separately
     vals.push(val); fields.push(`${k}=$${vals.length}`);
   }
-  if (!fields.length) return res.json({ ok: true });
-  vals.push(req.params.id, req.user!.sub);
-  await query(
-    `UPDATE campaigns SET ${fields.join(',')}, updated_at=now()
-      WHERE id=$${vals.length - 1} AND user_id=$${vals.length}
-        AND status IN ('draft','paused','queued')`, vals
+  if (fields.length) {
+    vals.push(req.params.id, req.user!.sub);
+    await query(
+      `UPDATE campaigns SET ${fields.join(',')}, updated_at=now()
+        WHERE id=$${vals.length - 1} AND user_id=$${vals.length}
+          AND status IN ('draft','paused','queued')`, vals
+    );
+  }
+
+  let recipientsResult: { valid: number; invalid: number; duplicates: number } | undefined;
+  if (v.recipients !== undefined) {
+    // Only allow recipient replace while draft
+    const { rows: cRows } = await query<{ status: string }>(
+      `SELECT status FROM campaigns WHERE id=$1 AND user_id=$2`,
+      [req.params.id, req.user!.sub]
+    );
+    if (cRows[0] && cRows[0].status === 'draft') {
+      const parsed = parseRecipients(v.recipients);
+      await query(`DELETE FROM campaign_recipients WHERE campaign_id=$1`, [req.params.id]);
+      if (parsed.valid.length) await insertRecipients(req.params.id, parsed.valid);
+      await query(`UPDATE campaigns SET total=$1, updated_at=now() WHERE id=$2`,
+        [parsed.valid.length, req.params.id]);
+      recipientsResult = {
+        valid: parsed.valid.length, invalid: parsed.invalid.length, duplicates: parsed.duplicates,
+      };
+    }
+  }
+
+  res.json({ ok: true, recipients: recipientsResult });
+});
+
+// --- bulk-add recipients (used by editor for paste / upload) ---
+const recipientsSchema = z.object({
+  recipients: z.array(z.string()).min(1).max(2_000_000),
+  replace: z.boolean().optional(),
+});
+campaignsRouter.post('/:id/recipients', async (req, res) => {
+  const v = recipientsSchema.parse(req.body);
+  const { rows: cRows } = await query<{ status: string }>(
+    `SELECT status FROM campaigns WHERE id=$1 AND user_id=$2`,
+    [req.params.id, req.user!.sub]
   );
-  res.json({ ok: true });
+  if (!cRows[0]) return res.status(404).json({ error: 'not_found' });
+  if (cRows[0].status !== 'draft') return res.status(400).json({ error: 'not_draft' });
+
+  const parsed = parseRecipients(v.recipients);
+  if (v.replace) {
+    await query(`DELETE FROM campaign_recipients WHERE campaign_id=$1`, [req.params.id]);
+  }
+  if (parsed.valid.length) await insertRecipients(req.params.id, parsed.valid);
+  const { rows: tot } = await query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1`,
+    [req.params.id]
+  );
+  const total = parseInt(tot[0].n, 10);
+  await query(`UPDATE campaigns SET total=$1, updated_at=now() WHERE id=$2`, [total, req.params.id]);
+  res.json({ ok: true, total, ...parsed, valid: parsed.valid.length, invalid: parsed.invalid.length });
 });
 
 // --- duplicate ---
 campaignsRouter.post('/:id/duplicate', async (req, res) => {
   const { rows } = await query<{ id: string }>(
-    `INSERT INTO campaigns (user_id, name, subject, html, text, list_id, smtp_ids)
-     SELECT user_id, name || ' (copy)', subject, html, text, list_id, smtp_ids
+    `INSERT INTO campaigns (user_id, name, subject, from_name, html, text, list_id, smtp_ids)
+     SELECT user_id, name || ' (copy)', subject, from_name, html, text, list_id, smtp_ids
        FROM campaigns WHERE id=$1 AND user_id=$2
      RETURNING id`,
     [req.params.id, req.user!.sub]
@@ -126,8 +233,9 @@ campaignsRouter.post('/:id/test', async (req, res) => {
   try {
     const t = buildTransport(smtp);
     const vars = { email, first_name: 'Test', last_name: 'Recipient', company: 'Test Co' };
+    const fromName = c.from_name || smtp.from_name;
     const info = await t.sendMail({
-      from: `"${smtp.from_name}" <${smtp.from_email}>`,
+      from: `"${fromName}" <${smtp.from_email}>`,
       to: email,
       subject: `[TEST] ${renderTemplate(c.subject, vars)}`,
       html: renderTemplate(c.html, vars),
@@ -148,38 +256,37 @@ campaignsRouter.post('/:id/start', async (req, res) => {
   const c = cRows[0]; if (!c) return res.status(404).json({ error: 'not_found' });
   if (!['draft', 'paused'].includes(c.status)) return res.status(400).json({ error: 'bad_state' });
   if (!c.smtp_ids?.length) return res.status(400).json({ error: 'no_smtp' });
-  if (!c.list_id) return res.status(400).json({ error: 'no_list' });
-
-  // verify quotas
-  const q = await getQuota(req.user!.sub);
-  const { rows: listCount } = await query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM contacts WHERE user_id=$1 AND list_id=$2`,
-    [req.user!.sub, c.list_id]
-  );
-  const audience = parseInt(listCount[0].n, 10);
-  if (audience === 0) return res.status(400).json({ error: 'empty_list' });
-  if (audience > q.daily_remaining) return res.status(400).json({ error: 'over_daily_limit', remaining: q.daily_remaining });
-  if (audience > q.monthly_remaining) return res.status(400).json({ error: 'over_monthly_limit', remaining: q.monthly_remaining });
 
   await tx(async (q) => {
     if (c.status === 'draft') {
-      await q(
-        `INSERT INTO campaign_recipients (campaign_id, email, first_name, last_name, company)
-         SELECT $1, email, first_name, last_name, company
-           FROM contacts WHERE user_id=$2 AND list_id=$3`,
-        [c.id, req.user!.sub, c.list_id]
+      // Legacy path: if a list_id is set and no inline recipients yet, materialize from contacts.
+      const { rows: existing } = await q<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1`, [c.id]
       );
+      const existingCount = parseInt(existing[0].n, 10);
+      if (existingCount === 0 && c.list_id) {
+        await q(
+          `INSERT INTO campaign_recipients (campaign_id, email, first_name, last_name, company)
+           SELECT $1, email, first_name, last_name, company
+             FROM contacts WHERE user_id=$2 AND list_id=$3`,
+          [c.id, req.user!.sub, c.list_id]
+        );
+      }
+      const { rows: tot } = await q<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1`, [c.id]
+      );
+      const total = parseInt(tot[0].n, 10);
+      if (total === 0) throw Object.assign(new Error('no_recipients'), { status: 400, code: 'no_recipients' });
       await q(
-        `UPDATE campaigns SET total=$1, status='queued', started_at=now(), updated_at=now() WHERE id=$2`,
-        [audience, c.id]
+        `UPDATE campaigns SET total=$1, status='queued', started_at=COALESCE(started_at, now()), updated_at=now()
+          WHERE id=$2`,
+        [total, c.id]
       );
     } else {
-      // resume from paused — re-queue anything still queued/delayed
       await q(`UPDATE campaigns SET status='queued', updated_at=now() WHERE id=$1`, [c.id]);
     }
-  });
+  }).catch(e => { throw e; });
 
-  // enqueue jobs for everything still in queued/delayed state
   const { rows: pending } = await query<{ id: string }>(
     `SELECT id FROM campaign_recipients WHERE campaign_id=$1 AND status IN ('queued','delayed')`,
     [c.id]
@@ -191,11 +298,10 @@ campaignsRouter.post('/:id/start', async (req, res) => {
   }));
   if (jobs.length) await campaignQueue.addBulk(jobs as any);
 
-  await audit(req, 'campaigns.start', c.id, { audience });
+  await audit(req, 'campaigns.start', c.id, { queued: jobs.length });
   res.json({ ok: true, queued: jobs.length });
 });
 
-// --- pause ---
 campaignsRouter.post('/:id/pause', async (req, res) => {
   await query(
     `UPDATE campaigns SET status='paused', updated_at=now()
@@ -206,14 +312,12 @@ campaignsRouter.post('/:id/pause', async (req, res) => {
   res.json({ ok: true });
 });
 
-// --- resume ---
 campaignsRouter.post('/:id/resume', async (req, res) => {
   await query(
     `UPDATE campaigns SET status='queued', updated_at=now()
       WHERE id=$1 AND user_id=$2 AND status='paused'`,
     [req.params.id, req.user!.sub]
   );
-  // Re-enqueue jobs that have no live job (worker also re-checks campaign status)
   const { rows: pending } = await query<{ id: string }>(
     `SELECT id FROM campaign_recipients WHERE campaign_id=$1 AND status IN ('queued','delayed')`,
     [req.params.id]
@@ -228,7 +332,6 @@ campaignsRouter.post('/:id/resume', async (req, res) => {
   res.json({ ok: true, queued: jobs.length });
 });
 
-// --- cancel ---
 campaignsRouter.post('/:id/cancel', async (req, res) => {
   await tx(async (q) => {
     await q(
@@ -246,7 +349,12 @@ campaignsRouter.post('/:id/cancel', async (req, res) => {
   res.json({ ok: true });
 });
 
-// --- delete ---
+// Alias for stop = cancel (front-end terminology)
+campaignsRouter.post('/:id/stop', async (req, res, next) => {
+  req.url = `/${req.params.id}/cancel`;
+  next();
+});
+
 campaignsRouter.delete('/:id', async (req, res) => {
   await query(
     `DELETE FROM campaigns WHERE id=$1 AND user_id=$2 AND status IN ('draft','completed','cancelled','failed')`,
