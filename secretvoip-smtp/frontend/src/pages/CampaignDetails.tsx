@@ -50,7 +50,19 @@ export default function CampaignDetails() {
     if (name === 'stop' && !confirm('Stop this campaign? In-flight recipients will be cancelled.')) return;
     setBusy(true);
     try { await api(`/campaigns/${id}/${name}`, { method: 'POST' }); await load(); }
-    catch (e: any) { alert(e?.message ?? 'Action failed'); }
+    catch (e: any) {
+      const code = e?.code;
+      const m = e?.message;
+      const map: Record<string, string> = {
+        no_smtp: 'Select at least one SMTP server.',
+        no_active_smtp: 'No active SMTP server matches this campaign.',
+        no_recipients: 'Add at least one recipient before sending.',
+        quota_exhausted: 'Global SMTP quota exhausted.',
+        worker_unavailable: 'Worker unavailable — try again or contact admin.',
+        service_unavailable: 'Backend temporarily unreachable. Try again.',
+      };
+      alert(map[code] ?? m ?? 'Action failed');
+    }
     finally { setBusy(false); }
   }
 
