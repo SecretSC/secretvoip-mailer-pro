@@ -5,7 +5,7 @@ import { bullConnection } from './redis';
 import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
-import { incrementUsage } from './lib/quota';
+import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
 
 // Simple per-user, per-day rotation index for SMTP selection.
 const rotationCursor = new Map<string, number>();
@@ -98,6 +98,16 @@ async function handleJob(job: Job<SendJob>) {
     company: r.company ?? '',
   };
 
+  // Global shared quota: skip and requeue if exhausted; count on success.
+  const gq = await getGlobalQuota();
+  if (gq.active && gq.exhausted) {
+    await query(
+      `UPDATE campaign_recipients SET status='queued', error='global_quota_exhausted', updated_at=now() WHERE id=$1`,
+      [recipientId]
+    );
+    throw Object.assign(new Error('global_quota_exhausted'), { retryAfterMs: 60_000 });
+  }
+
   const startedAt = Date.now();
   try {
     const t = buildTransport(smtp);
@@ -130,6 +140,7 @@ async function handleJob(job: Job<SendJob>) {
       [userId, campaignId, r.email, smtp.id, info.messageId ?? null, smtpResp, rtMs]
     );
     await incrementUsage(userId, 1);
+    await reserveGlobalQuota(1).catch(() => {});
   } catch (e: any) {
     const rtMs = Date.now() - startedAt;
     const msg = (e?.message ?? String(e)).slice(0, 1000);
@@ -184,7 +195,8 @@ const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   } catch (e: any) {
     if (e?.retryAfterMs) {
       await job.moveToDelayed(Date.now() + e.retryAfterMs, job.token!);
-      throw new Worker.RateLimitError?.() ?? e;
+      const RLE = (Worker as any).RateLimitError;
+      throw RLE ? new RLE() : e;
     }
     throw e;
   }

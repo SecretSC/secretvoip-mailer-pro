@@ -42,8 +42,6 @@ export default function Layout() {
         <Item to="/templates" label="Templates" icon="❐" />
         <Item to="/transmission" label="Transmission Log" icon="≡" />
         <Item to="/smtp" label="SMTP Servers" icon="✉" />
-        <Item to="/contacts" label="Contacts" icon="◍" />
-        <Item to="/contacts/import" label="Import CSV" icon="↑" />
         <Item to="/settings" label="Settings" icon="⚙" />
         <Item to="/profile" label="Profile" icon="◉" />
         {user?.role === 'admin' && (

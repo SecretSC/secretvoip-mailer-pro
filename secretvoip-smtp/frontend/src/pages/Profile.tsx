@@ -31,7 +31,7 @@ export default function Profile() {
         <div className="grid sm:grid-cols-3 gap-3 text-sm">
           <div><div className="text-slate-500 text-xs uppercase tracking-wider">Username</div><div className="font-medium">{user?.username}</div></div>
           <div><div className="text-slate-500 text-xs uppercase tracking-wider">Role</div><div className="font-medium capitalize">{user?.role}</div></div>
-          <div><div className="text-slate-500 text-xs uppercase tracking-wider">Daily limit</div><div className="font-medium">{user?.daily_limit.toLocaleString()}</div></div>
+          <div><div className="text-slate-500 text-xs uppercase tracking-wider">Status</div><div className="font-medium">Active</div></div>
         </div>
       </div>
       <form className="card space-y-3" onSubmit={submit}>

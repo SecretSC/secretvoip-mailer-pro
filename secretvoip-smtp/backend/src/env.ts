@@ -15,7 +15,7 @@ export const env = {
     .split(',').map(s => s.trim()).filter(Boolean),
 
   JWT_SECRET: req('JWT_SECRET'),
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN ?? '7d',
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN ?? '30d',
   ENCRYPTION_KEY: req('ENCRYPTION_KEY'),
 
   DATABASE_URL: req('DATABASE_URL'),

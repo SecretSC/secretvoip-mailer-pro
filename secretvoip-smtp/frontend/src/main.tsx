@@ -18,6 +18,7 @@ import ImportCsv from './pages/ImportCsv';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/AdminUsers';
+import AdminClientDetails from './pages/AdminClientDetails';
 import AuditLogs from './pages/AuditLogs';
 import Templates from './pages/Templates';
 import './index.css';
@@ -47,6 +48,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/settings" element={<Settings />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/admin/users" element={<ProtectedRoute adminOnly><AdminUsers /></ProtectedRoute>} />
+            <Route path="/admin/users/:id" element={<ProtectedRoute adminOnly><AdminClientDetails /></ProtectedRoute>} />
             <Route path="/admin/audit" element={<ProtectedRoute adminOnly><AuditLogs /></ProtectedRoute>} />
           </Route>
 

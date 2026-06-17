@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import GlobalQuotaCard, { useGlobalQuota } from '../components/GlobalQuotaCard';
 
 interface Smtp { id: string; name: string; from_email: string; from_name: string; status: string }
 interface Template { id: string; name: string; subject: string; html: string; text: string }
@@ -46,7 +47,9 @@ export default function CampaignEditor() {
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const quota = useGlobalQuota();
 
   useEffect(() => {
     api<{ smtps: Smtp[] }>('/smtp').then(r => setSmtps(r.smtps.filter(s => s.status === 'active')));
@@ -144,6 +147,8 @@ export default function CampaignEditor() {
         </div>
       </div>
 
+      <GlobalQuotaCard />
+
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
           <div className="card space-y-4">
@@ -218,14 +223,40 @@ export default function CampaignEditor() {
           </div>
 
           {err && <div className="card text-sm text-crimson-400">{err}</div>}
+          {quota?.exhausted && (
+            <div className="card text-sm text-crimson-300 border-crimson-500/30">
+              Global SMTP quota exhausted. Contact administrator.
+            </div>
+          )}
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <button type="button" className="btn-ghost flex-1" onClick={() => setPreviewOpen(true)}>Preview</button>
             <button className="btn-ghost flex-1" disabled={saving} onClick={() => save(false)}>Save draft</button>
-            <button className="btn-primary flex-1" disabled={saving || parsed.valid.length === 0 || smtpIds.length === 0}
-              onClick={() => save(true)}>Save & start</button>
+            <button className="btn-primary w-full" disabled={saving || parsed.valid.length === 0 || smtpIds.length === 0 || quota?.exhausted}
+              onClick={() => save(true)}>Send Campaign</button>
           </div>
         </div>
       </div>
+
+      {previewOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPreviewOpen(false)}>
+          <div className="bg-ink-900 border border-white/10 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-white/10 flex items-center justify-between">
+              <div className="font-semibold">Email preview</div>
+              <button className="btn-ghost text-xs" onClick={() => setPreviewOpen(false)}>Close</button>
+            </div>
+            <div className="p-4 border-b border-white/10 text-sm space-y-1 bg-white/[0.02]">
+              <div><span className="text-slate-500">From:</span> {fromName || smtps.find(s => smtpIds.includes(s.id))?.from_name || '(SMTP default)'} &lt;{smtps.find(s => smtpIds.includes(s.id))?.from_email ?? '—'}&gt;</div>
+              <div><span className="text-slate-500">Subject:</span> {subject || '(no subject)'}</div>
+              <div><span className="text-slate-500">SMTP:</span> {smtpIds.length ? smtpIds.map(id => smtps.find(s => s.id === id)?.name).filter(Boolean).join(', ') : '(none selected)'}</div>
+              <div><span className="text-slate-500">Recipients:</span> {parsed.valid.length.toLocaleString()}</div>
+            </div>
+            <div className="flex-1 overflow-auto bg-white">
+              <iframe title="preview" className="w-full h-[60vh]" srcDoc={html} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

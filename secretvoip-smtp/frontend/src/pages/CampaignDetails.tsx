@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import GlobalQuotaCard from '../components/GlobalQuotaCard';
 
 interface C {
   id: string; name: string; subject: string; status: string;
@@ -80,6 +81,8 @@ export default function CampaignDetails() {
           {!canStop && <button className="btn-danger" disabled={busy} onClick={async () => { await api(`/campaigns/${id}`, { method: 'DELETE' }); nav('/campaigns'); }}>Delete</button>}
         </div>
       </div>
+
+      <GlobalQuotaCard />
 
       <div className="card">
         <div className="flex items-baseline justify-between text-sm mb-3">
