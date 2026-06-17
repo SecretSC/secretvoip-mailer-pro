@@ -1,11 +1,27 @@
 import { Worker, Job } from 'bullmq';
 import { env } from './env';
 import { logger } from './logger';
-import { bullConnection } from './redis';
+import { bullConnection, redis } from './redis';
 import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
 import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
+
+// ---- Worker heartbeat (read by /diagnostics) -----------------------------
+const WORKER_HEARTBEAT_KEY = 'smtp:worker:heartbeat';
+const workerState: {
+  pid: number; startedAt: number;
+  lastJobId?: string; lastJobAt?: number; lastJobStatus?: 'ok' | 'fail';
+  lastError?: string; lastErrorAt?: number;
+} = { pid: process.pid, startedAt: Date.now() };
+
+async function writeHeartbeat() {
+  try {
+    await redis.set(WORKER_HEARTBEAT_KEY, JSON.stringify(workerState), 'EX', 15);
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'worker_heartbeat_failed');
+  }
+}
 
 // Simple per-user, per-day rotation index for SMTP selection.
 const rotationCursor = new Map<string, number>();
