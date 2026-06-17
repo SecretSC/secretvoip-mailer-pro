@@ -14,6 +14,7 @@ import { logsRouter } from './routes/logs';
 import { dashboardRouter } from './routes/dashboard';
 import { settingsRouter } from './routes/settings';
 import { templatesRouter } from './routes/templates';
+import { diagnosticsRouter } from './routes/diagnostics';
 
 const app = express();
 
