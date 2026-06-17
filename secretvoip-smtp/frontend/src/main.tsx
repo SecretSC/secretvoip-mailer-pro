@@ -19,6 +19,7 @@ import Settings from './pages/Settings';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/AdminUsers';
 import AuditLogs from './pages/AuditLogs';
+import Templates from './pages/Templates';
 import './index.css';
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -39,6 +40,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/campaigns/:id/edit" element={<CampaignEditor />} />
             <Route path="/campaigns/:id" element={<CampaignDetails />} />
             <Route path="/transmission" element={<TransmissionLog />} />
+            <Route path="/templates" element={<Templates />} />
             <Route path="/smtp" element={<Smtp />} />
             <Route path="/contacts" element={<Contacts />} />
             <Route path="/contacts/import" element={<ImportCsv />} />

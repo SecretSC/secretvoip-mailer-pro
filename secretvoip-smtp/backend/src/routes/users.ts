@@ -25,9 +25,10 @@ usersRouter.get('/', async (req, res) => {
 const createSchema = z.object({
   username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
   password: z.string().min(8).max(256),
-  daily_limit: z.number().int().min(0).default(env.DEFAULT_DAILY_LIMIT),
-  monthly_limit: z.number().int().min(0).default(env.DEFAULT_MONTHLY_LIMIT),
-  balance: z.number().int().min(0).default(0),
+  // Optional — sensible high defaults; user's SMTP provider enforces real limits.
+  daily_limit: z.number().int().min(0).optional(),
+  monthly_limit: z.number().int().min(0).optional(),
+  balance: z.number().int().min(0).optional(),
   notes: z.string().max(2000).optional(),
 });
 
@@ -36,11 +37,14 @@ usersRouter.post('/', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'invalid_input', detail: parsed.error.format() });
   const v = parsed.data;
   const hash = await bcrypt.hash(v.password, 12);
+  const daily = v.daily_limit ?? env.DEFAULT_DAILY_LIMIT;
+  const monthly = v.monthly_limit ?? env.DEFAULT_MONTHLY_LIMIT;
+  const balance = v.balance ?? 0;
   try {
     const { rows } = await query<{ id: string }>(
       `INSERT INTO users (username, password_hash, role, force_password_change, daily_limit, monthly_limit, balance, notes)
        VALUES ($1,$2,'client', true, $3,$4,$5,$6) RETURNING id`,
-      [v.username, hash, v.daily_limit, v.monthly_limit, v.balance, v.notes ?? null]
+      [v.username, hash, daily, monthly, balance, v.notes ?? null]
     );
     await audit(req, 'users.create', rows[0].id, { username: v.username });
     res.status(201).json({ id: rows[0].id, username: v.username, password: v.password });

@@ -24,8 +24,8 @@ export const env = {
   WORKER_CONCURRENCY: parseInt(process.env.WORKER_CONCURRENCY ?? '10', 10),
   WORKER_RATE_PER_SECOND: parseInt(process.env.WORKER_RATE_PER_SECOND ?? '20', 10),
 
-  DEFAULT_DAILY_LIMIT: parseInt(process.env.DEFAULT_DAILY_LIMIT ?? '5000', 10),
-  DEFAULT_MONTHLY_LIMIT: parseInt(process.env.DEFAULT_MONTHLY_LIMIT ?? '100000', 10),
+  DEFAULT_DAILY_LIMIT: parseInt(process.env.DEFAULT_DAILY_LIMIT ?? '1000000', 10),
+  DEFAULT_MONTHLY_LIMIT: parseInt(process.env.DEFAULT_MONTHLY_LIMIT ?? '30000000', 10),
 
   LOG_LEVEL: process.env.LOG_LEVEL ?? 'info',
 };

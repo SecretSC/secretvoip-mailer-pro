@@ -28,8 +28,8 @@ async function handleJob(job: Job<SendJob>) {
   const { recipientId, campaignId, userId } = job.data;
 
   // Reload campaign to honor pause/cancel mid-flight
-  const { rows: cRows } = await query<{ id: string; status: string; subject: string; html: string; text: string; smtp_ids: string[] }>(
-    `SELECT id, status, subject, html, text, smtp_ids FROM campaigns WHERE id=$1`, [campaignId]
+  const { rows: cRows } = await query<{ id: string; status: string; subject: string; html: string; text: string; from_name: string | null; smtp_ids: string[] }>(
+    `SELECT id, status, subject, html, text, from_name, smtp_ids FROM campaigns WHERE id=$1`, [campaignId]
   );
   const c = cRows[0];
   if (!c) throw new Error('campaign_missing');
@@ -98,42 +98,59 @@ async function handleJob(job: Job<SendJob>) {
     company: r.company ?? '',
   };
 
+  const startedAt = Date.now();
   try {
     const t = buildTransport(smtp);
+    const fromName = c.from_name || smtp.from_name;
     const info = await t.sendMail({
-      from: `"${smtp.from_name}" <${smtp.from_email}>`,
+      from: `"${fromName}" <${smtp.from_email}>`,
       to: r.email,
       subject: renderTemplate(c.subject, vars),
       html: renderTemplate(c.html, vars),
       text: renderTemplate(c.text, vars),
     });
+    const rtMs = Date.now() - startedAt;
+    const smtpResp = (info as any)?.response ? String((info as any).response).slice(0, 1000) : null;
 
     await query(
-      `UPDATE campaign_recipients SET status='delivered', smtp_id=$2, sent_at=now(), updated_at=now() WHERE id=$1`,
-      [recipientId, smtp.id]
+      `UPDATE campaign_recipients
+          SET status='delivered', smtp_id=$2, sent_at=now(), updated_at=now(),
+              smtp_response=$3, message_id=$4
+        WHERE id=$1`,
+      [recipientId, smtp.id, smtpResp, info.messageId ?? null]
     );
-    await query(`UPDATE campaigns SET sent=sent+1, delivered=delivered+1, updated_at=now() WHERE id=$1`, [campaignId]);
     await query(
-      `INSERT INTO email_logs (user_id, campaign_id, recipient, smtp_id, status, message_id) VALUES ($1,$2,$3,$4,'delivered',$5)`,
-      [userId, campaignId, r.email, smtp.id, info.messageId ?? null]
+      `UPDATE campaigns
+          SET sent=sent+1, delivered=delivered+1, accepted=accepted+1, updated_at=now()
+        WHERE id=$1`, [campaignId]
+    );
+    await query(
+      `INSERT INTO email_logs (user_id, campaign_id, recipient, smtp_id, status, message_id, smtp_response, rt_ms)
+       VALUES ($1,$2,$3,$4,'delivered',$5,$6,$7)`,
+      [userId, campaignId, r.email, smtp.id, info.messageId ?? null, smtpResp, rtMs]
     );
     await incrementUsage(userId, 1);
   } catch (e: any) {
+    const rtMs = Date.now() - startedAt;
     const msg = (e?.message ?? String(e)).slice(0, 1000);
     const code: string = e?.code ?? '';
+    const smtpResp = e?.response ? String(e.response).slice(0, 1000) : null;
     const bounced = /^EENVELOPE$|^EMESSAGE$/.test(code) || /55[0-9]/.test(msg);
 
     await query(
-      `UPDATE campaign_recipients SET status=$2, error=$3, smtp_id=$4, updated_at=now() WHERE id=$1`,
-      [recipientId, bounced ? 'bounced' : 'failed', msg, smtp.id]
+      `UPDATE campaign_recipients
+          SET status=$2, error=$3, smtp_id=$4, smtp_response=$5, updated_at=now()
+        WHERE id=$1`,
+      [recipientId, bounced ? 'bounced' : 'failed', msg, smtp.id, smtpResp]
     );
     await query(
       `UPDATE campaigns SET ${bounced ? 'bounced=bounced+1' : 'failed=failed+1'}, updated_at=now() WHERE id=$1`,
       [campaignId]
     );
     await query(
-      `INSERT INTO email_logs (user_id, campaign_id, recipient, smtp_id, status, error) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [userId, campaignId, r.email, smtp.id, bounced ? 'bounced' : 'failed', msg]
+      `INSERT INTO email_logs (user_id, campaign_id, recipient, smtp_id, status, error, smtp_response, rt_ms)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [userId, campaignId, r.email, smtp.id, bounced ? 'bounced' : 'failed', msg, smtpResp, rtMs]
     );
     if (!bounced && job.attemptsMade < (job.opts.attempts ?? 3)) {
       throw e; // let BullMQ retry with backoff

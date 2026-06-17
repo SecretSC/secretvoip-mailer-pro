@@ -39,6 +39,7 @@ export default function Layout() {
 
         <Item to="/dashboard" label="Dashboard" icon="◆" />
         <Item to="/campaigns" label="Campaigns" icon="✦" />
+        <Item to="/templates" label="Templates" icon="❐" />
         <Item to="/transmission" label="Transmission Log" icon="≡" />
         <Item to="/smtp" label="SMTP Servers" icon="✉" />
         <Item to="/contacts" label="Contacts" icon="◍" />

@@ -86,11 +86,23 @@ smtpRouter.post('/:id/test', async (req, res) => {
   );
   const smtp = rows[0];
   if (!smtp) return res.status(404).json({ error: 'not_found' });
+  const t0 = Date.now();
   const result = await verifyTransport(smtp);
+  const rt_ms = Date.now() - t0;
+  const payload = {
+    ok: result.ok,
+    error: result.ok ? undefined : result.error,
+    rt_ms,
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.secure,
+    starttls: smtp.starttls,
+    tls: smtp.secure ? 'ssl' : (smtp.starttls ? 'starttls' : 'plain'),
+  };
   await query(
     `UPDATE smtp_configs SET last_test_at=now(), last_test_status=$1, last_test_error=$2 WHERE id=$3`,
     [result.ok ? 'ok' : 'failed', result.ok ? null : result.error ?? null, req.params.id]
   );
-  await audit(req, 'smtp.test', req.params.id, { ok: result.ok });
-  res.json(result);
+  await audit(req, 'smtp.test', req.params.id, { ok: result.ok, rt_ms });
+  res.json(payload);
 });
