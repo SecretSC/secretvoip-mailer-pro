@@ -67,17 +67,21 @@ export async function api<T = any>(
   }
   setOnline(true);
 
-  // 502/503/504 = upstream blip; treat as transient — keep the user logged in.
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    setOnline(false);
-    throw new ApiError(res.status, 'service_unavailable', 'service_unavailable', null, true);
-  }
-
   const text = await res.text();
   const data = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
 
+  // Upstream blip (Apache/proxy) — only treat as transient if backend did NOT return JSON.
+  // If backend returned a structured error body, use it verbatim instead of the generic message.
+  if ((res.status === 502 || res.status === 503 || res.status === 504) && !(data && typeof data === 'object' && ('error' in (data as any) || 'message' in (data as any)))) {
+    setOnline(false);
+    throw new ApiError(res.status, 'Connection lost — backend unreachable.', 'service_unavailable', null, true);
+  }
+
   if (!res.ok) {
     const code = (data && typeof data === 'object' && 'error' in data) ? (data as any).error : undefined;
+    const message = (data && typeof data === 'object')
+      ? ((data as any).message ?? (data as any).error ?? res.statusText)
+      : (typeof data === 'string' && data ? data : res.statusText);
     // ONLY force re-login on a true auth failure with our token (expired / revoked / invalid).
     if (
       res.status === 401 &&
@@ -87,7 +91,7 @@ export async function api<T = any>(
       setToken(null);
       window.location.assign(`${import.meta.env.BASE_URL}login`);
     }
-    throw new ApiError(res.status, (data as any)?.message ?? (data as any)?.error ?? res.statusText, code, data);
+    throw new ApiError(res.status, message, code, data);
   }
   return data as T;
 }
