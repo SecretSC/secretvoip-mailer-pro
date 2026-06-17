@@ -327,20 +327,71 @@ campaignsRouter.post('/:id/start', async (req, res) => {
       opts: { jobId: `r:${p.id}` },
     }));
     if (jobs.length) {
+      // Pre-flight: Redis reachable?
+      console.log('QUEUE ADD START campaign=' + c.id + ' jobs=' + jobs.length);
       try {
-        await campaignQueue.addBulk(jobs as any);
+        const pong = await bullConnection.ping();
+        if (pong !== 'PONG') throw new Error('redis_ping_unexpected: ' + pong);
       } catch (e: any) {
-        // Roll the campaign back to draft so the user can retry
+        console.error('QUEUE ADD FAILED redis_unreachable', e);
         await query(`UPDATE campaigns SET status='draft', updated_at=now() WHERE id=$1`, [c.id]).catch(() => {});
         return res.status(503).json({
-          error: 'worker_unavailable',
-          message: 'Worker unavailable — could not queue the campaign. ' + (e?.message ?? ''),
+          error: 'redis_unreachable',
+          message: 'Redis connection failed: ' + (e?.message ?? String(e)),
+        });
+      }
+
+      // Pre-flight: worker(s) connected?
+      let workersConnected = 0;
+      try {
+        const workers = await campaignQueue.getWorkers();
+        workersConnected = workers?.length ?? 0;
+      } catch (e: any) {
+        console.error('QUEUE ADD FAILED getWorkers', e);
+      }
+
+      // QueueEvents readiness (non-fatal warning)
+      if (!queueEventsState.ready) {
+        console.warn('QUEUE EVENTS not ready at start: ' + (queueEventsState.lastError ?? 'unknown'));
+      }
+
+      try {
+        const added = await campaignQueue.addBulk(jobs as any);
+        console.log('QUEUE ADD SUCCESS campaign=' + c.id + ' added=' + added.length);
+        await redis.set(LAST_INSERT_KEY, JSON.stringify({
+          at: Date.now(), campaignId: c.id, count: added.length,
+        }), 'EX', 86400).catch(() => {});
+      } catch (e: any) {
+        console.error('QUEUE ADD FAILED bulk', e);
+        await query(`UPDATE campaigns SET status='draft', updated_at=now() WHERE id=$1`, [c.id]).catch(() => {});
+        return res.status(503).json({
+          error: 'queue_add_failed',
+          message: 'Queue add failed: ' + (e?.message ?? String(e)),
+          detail: {
+            redis: 'ok',
+            workers_connected: workersConnected,
+            queue_events_ready: queueEventsState.ready,
+            queue_events_error: queueEventsState.lastError ?? null,
+          },
+        });
+      }
+
+      // Post-insert: if no workers were connected, surface a clear (but non-destructive) warning.
+      // Jobs are safely persisted in Redis and will be picked up once a worker starts.
+      if (workersConnected === 0) {
+        await audit(req, 'campaigns.start', c.id, { queued: jobs.length, warning: 'no_worker_connected' });
+        return res.status(202).json({
+          ok: true,
+          queued: jobs.length,
+          warning: 'no_worker_connected',
+          message: 'Jobs were queued, but no worker process is currently connected. Start the worker (systemctl start secretvoip-smtp-worker) — queued jobs will resume automatically.',
         });
       }
     }
 
     await audit(req, 'campaigns.start', c.id, { queued: jobs.length });
     res.json({ ok: true, queued: jobs.length });
+
   } catch (e: any) {
     return res.status(500).json({
       error: 'start_failed',
