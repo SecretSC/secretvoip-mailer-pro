@@ -1,11 +1,27 @@
 import { Worker, Job } from 'bullmq';
 import { env } from './env';
 import { logger } from './logger';
-import { bullConnection } from './redis';
+import { bullConnection, redis } from './redis';
 import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
 import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
+
+// ---- Worker heartbeat (read by /diagnostics) -----------------------------
+const WORKER_HEARTBEAT_KEY = 'smtp:worker:heartbeat';
+const workerState: {
+  pid: number; startedAt: number;
+  lastJobId?: string; lastJobAt?: number; lastJobStatus?: 'ok' | 'fail';
+  lastError?: string; lastErrorAt?: number;
+} = { pid: process.pid, startedAt: Date.now() };
+
+async function writeHeartbeat() {
+  try {
+    await redis.set(WORKER_HEARTBEAT_KEY, JSON.stringify(workerState), 'EX', 15);
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'worker_heartbeat_failed');
+  }
+}
 
 // Simple per-user, per-day rotation index for SMTP selection.
 const rotationCursor = new Map<string, number>();
@@ -213,14 +229,49 @@ const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   limiter: { max: env.WORKER_RATE_PER_SECOND, duration: 1000 },
 });
 
-worker.on('completed', (job) => logger.debug({ jobId: job.id }, 'job_done'));
-worker.on('failed', (job, err) => logger.warn({ jobId: job?.id, err: err?.message }, 'job_failed'));
-worker.on('error', (err) => logger.error({ err }, 'worker_error'));
+worker.on('ready', () => {
+  console.log('WORKER READY pid=' + process.pid + ' queue=' + CAMPAIGN_QUEUE);
+  writeHeartbeat();
+});
+worker.on('active', (job) => {
+  workerState.lastJobId = String(job.id ?? '');
+  workerState.lastJobAt = Date.now();
+  writeHeartbeat();
+});
+worker.on('completed', (job) => {
+  workerState.lastJobStatus = 'ok';
+  workerState.lastJobId = String(job.id ?? workerState.lastJobId ?? '');
+  workerState.lastJobAt = Date.now();
+  logger.debug({ jobId: job.id }, 'job_done');
+  writeHeartbeat();
+});
+worker.on('failed', (job, err) => {
+  workerState.lastJobStatus = 'fail';
+  workerState.lastError = err?.message ?? String(err);
+  workerState.lastErrorAt = Date.now();
+  workerState.lastJobId = String(job?.id ?? workerState.lastJobId ?? '');
+  workerState.lastJobAt = Date.now();
+  logger.warn({ jobId: job?.id, err: err?.message }, 'job_failed');
+  writeHeartbeat();
+});
+worker.on('error', (err) => {
+  workerState.lastError = err?.message ?? String(err);
+  workerState.lastErrorAt = Date.now();
+  logger.error({ err }, 'worker_error');
+  console.error('WORKER ERROR', err);
+  writeHeartbeat();
+});
 
-logger.info({ concurrency: env.WORKER_CONCURRENCY, rate: env.WORKER_RATE_PER_SECOND }, 'secretvoip-smtp worker started');
+logger.info({ pid: process.pid, concurrency: env.WORKER_CONCURRENCY, rate: env.WORKER_RATE_PER_SECOND }, 'secretvoip-smtp worker started');
+console.log('WORKER START pid=' + process.pid + ' concurrency=' + env.WORKER_CONCURRENCY);
+writeHeartbeat();
+const hbTimer = setInterval(writeHeartbeat, 5000);
+hbTimer.unref?.();
 
 const shutdown = async (sig: string) => {
   logger.info({ sig }, 'worker shutting down');
+  clearInterval(hbTimer);
+  await redis.del(WORKER_HEARTBEAT_KEY).catch(() => {});
   await worker.close();
   process.exit(0);
 };
