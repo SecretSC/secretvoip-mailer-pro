@@ -166,6 +166,10 @@ async function handleJob(job: Job<SendJob>) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [userId, campaignId, r.email, smtp.id, bounced ? 'bounced' : 'failed', msg, smtpResp, rtMs]
     );
+    await query(
+      `UPDATE smtp_configs SET last_failed_at=now(), last_failed_error=$2 WHERE id=$1`,
+      [smtp.id, msg]
+    ).catch(() => {});
     if (!bounced && job.attemptsMade < (job.opts.attempts ?? 3)) {
       throw e; // let BullMQ retry with backoff
     }
