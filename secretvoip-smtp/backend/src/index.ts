@@ -13,6 +13,7 @@ import { campaignsRouter } from './routes/campaigns';
 import { logsRouter } from './routes/logs';
 import { dashboardRouter } from './routes/dashboard';
 import { settingsRouter } from './routes/settings';
+import { templatesRouter } from './routes/templates';
 
 const app = express();
 
@@ -41,6 +42,7 @@ api.use('/campaigns', campaignsRouter);
 api.use('/logs', logsRouter);
 api.use('/dashboard', dashboardRouter);
 api.use('/settings', settingsRouter);
+api.use('/templates', templatesRouter);
 
 app.use(base, api);
 
