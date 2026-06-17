@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user, online, refresh]);
 
   // Subscribe to connection state from api.ts
-  useEffect(() => onConnectionChange(setOnline), []);
+  useEffect(() => { const off = onConnectionChange(setOnline); return () => { off(); }; }, []);
 
   const login = useCallback(async (username: string, password: string) => {
     const r = await api<{ token: string; user: AuthUser }>('/auth/login', { method: 'POST', body: { username, password } });
