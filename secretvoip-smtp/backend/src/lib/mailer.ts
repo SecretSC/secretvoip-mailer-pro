@@ -1,0 +1,66 @@
+import nodemailer, { Transporter } from 'nodemailer';
+import { decryptSecret } from '../crypto';
+
+export interface SmtpRow {
+  id: string;
+  host: string;
+  port: number;
+  username: string;
+  password_enc: string;
+  secure: boolean;
+  starttls: boolean;
+  from_name: string;
+  from_email: string;
+}
+
+const cache = new Map<string, Transporter>();
+
+export function buildTransport(smtp: SmtpRow): Transporter {
+  const key = `${smtp.id}:${smtp.host}:${smtp.port}:${smtp.username}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const t = nodemailer.createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.secure,
+    requireTLS: smtp.starttls && !smtp.secure,
+    auth: { user: smtp.username, pass: decryptSecret(smtp.password_enc) },
+    pool: true,
+    maxConnections: 3,
+    maxMessages: 200,
+    connectionTimeout: 15_000,
+    socketTimeout: 30_000,
+  });
+  cache.set(key, t);
+  return t;
+}
+
+export function invalidateTransport(smtpId: string) {
+  for (const k of Array.from(cache.keys())) {
+    if (k.startsWith(`${smtpId}:`)) cache.delete(k);
+  }
+}
+
+export async function verifyTransport(smtp: SmtpRow): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const t = nodemailer.createTransport({
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.secure,
+      requireTLS: smtp.starttls && !smtp.secure,
+      auth: { user: smtp.username, pass: decryptSecret(smtp.password_enc) },
+      connectionTimeout: 10_000,
+      socketTimeout: 10_000,
+    });
+    await t.verify();
+    t.close();
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+// Simple template substitution: {{first_name}}, {{last_name}}, {{company}}, {{email}}
+export function renderTemplate(body: string, vars: Record<string, string | undefined | null>): string {
+  return body.replace(/\{\{\s*([a-zA-Z_]+)\s*\}\}/g, (_, k) => (vars[k] ?? '').toString());
+}
