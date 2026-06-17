@@ -95,3 +95,41 @@ usersRouter.delete('/:id', async (req, res) => {
   await audit(req, 'users.delete', req.params.id);
   res.json({ ok: true });
 });
+
+// Admin: detailed client inspection
+usersRouter.get('/:id/details', async (req, res) => {
+  const uid = req.params.id;
+  const { rows: u } = await query(
+    `SELECT id, username, role, status, created_at, notes FROM users WHERE id=$1`, [uid]
+  );
+  if (!u[0]) return res.status(404).json({ error: 'not_found' });
+
+  const { rows: smtps } = await query(
+    `SELECT id, name, host, port, username, secure, starttls, from_email, status, created_at, last_test_at
+       FROM smtp_configs WHERE user_id=$1 ORDER BY created_at DESC`, [uid]
+  );
+  const { rows: campaigns } = await query(
+    `SELECT id, name, status, total, sent, accepted, delivered, failed, created_at
+       FROM campaigns WHERE user_id=$1 ORDER BY created_at DESC LIMIT 200`, [uid]
+  );
+  const { rows: templates } = await query(
+    `SELECT id, name, subject, created_at, updated_at FROM email_templates WHERE user_id=$1 ORDER BY updated_at DESC`, [uid]
+  ).catch(() => ({ rows: [] as any[] }));
+  const { rows: logs } = await query(
+    `SELECT id, recipient, smtp_id, status, message_id, smtp_response, error, created_at
+       FROM email_logs WHERE user_id=$1 ORDER BY created_at DESC LIMIT 200`, [uid]
+  );
+  const { rows: activity } = await query(
+    `SELECT id, action, target, created_at, meta FROM audit_logs WHERE user_id=$1
+      ORDER BY created_at DESC LIMIT 200`, [uid]
+  );
+
+  res.json({
+    user: u[0],
+    smtps,
+    campaigns: campaigns.map((c: any) => ({ ...c, accepted: c.accepted ?? c.delivered ?? 0 })),
+    templates,
+    logs,
+    activity,
+  });
+});
