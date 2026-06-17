@@ -3,12 +3,16 @@ import { z } from 'zod';
 import { query, tx } from '../db';
 import { requireAuth, requirePasswordOk } from '../auth/middleware';
 import { audit } from '../lib/audit';
-import { campaignQueue } from '../queue';
+import { campaignQueue, queueEventsState } from '../queue';
+import { redis, bullConnection } from '../redis';
 import { buildTransport, renderTemplate } from '../lib/mailer';
 import { getGlobalQuota } from '../lib/quota';
 
 export const campaignsRouter = Router();
 campaignsRouter.use(requireAuth, requirePasswordOk);
+
+const LAST_INSERT_KEY = 'smtp:queue:last_insert';
+
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
