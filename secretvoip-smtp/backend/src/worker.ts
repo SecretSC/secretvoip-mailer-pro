@@ -98,17 +98,14 @@ async function handleJob(job: Job<SendJob>) {
     company: r.company ?? '',
   };
 
-  // Global shared quota: reserve before sending. If exhausted, requeue with delay.
+  // Global shared quota: skip and requeue if exhausted; count on success.
   const gq = await getGlobalQuota();
-  if (gq.active) {
-    const ok = await reserveGlobalQuota(1);
-    if (!ok) {
-      await query(
-        `UPDATE campaign_recipients SET status='queued', error='global_quota_exhausted', updated_at=now() WHERE id=$1`,
-        [recipientId]
-      );
-      throw Object.assign(new Error('global_quota_exhausted'), { retryAfterMs: 60_000 });
-    }
+  if (gq.active && gq.exhausted) {
+    await query(
+      `UPDATE campaign_recipients SET status='queued', error='global_quota_exhausted', updated_at=now() WHERE id=$1`,
+      [recipientId]
+    );
+    throw Object.assign(new Error('global_quota_exhausted'), { retryAfterMs: 60_000 });
   }
 
   const startedAt = Date.now();
