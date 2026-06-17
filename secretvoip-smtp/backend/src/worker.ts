@@ -195,7 +195,8 @@ const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   } catch (e: any) {
     if (e?.retryAfterMs) {
       await job.moveToDelayed(Date.now() + e.retryAfterMs, job.token!);
-      throw new Worker.RateLimitError?.() ?? e;
+      const RLE = (Worker as any).RateLimitError;
+      throw RLE ? new RLE() : e;
     }
     throw e;
   }
