@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import GlobalQuotaCard, { useGlobalQuota } from '../components/GlobalQuotaCard';
 
 interface Smtp { id: string; name: string; from_email: string; from_name: string; status: string }
 interface Template { id: string; name: string; subject: string; html: string; text: string }
@@ -46,7 +47,9 @@ export default function CampaignEditor() {
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const quota = useGlobalQuota();
 
   useEffect(() => {
     api<{ smtps: Smtp[] }>('/smtp').then(r => setSmtps(r.smtps.filter(s => s.status === 'active')));
