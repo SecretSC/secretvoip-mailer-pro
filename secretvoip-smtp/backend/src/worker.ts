@@ -140,6 +140,7 @@ async function handleJob(job: Job<SendJob>) {
       [userId, campaignId, r.email, smtp.id, info.messageId ?? null, smtpResp, rtMs]
     );
     await incrementUsage(userId, 1);
+    await reserveGlobalQuota(1).catch(() => {});
   } catch (e: any) {
     const rtMs = Date.now() - startedAt;
     const msg = (e?.message ?? String(e)).slice(0, 1000);
