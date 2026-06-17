@@ -44,6 +44,7 @@ api.use('/logs', logsRouter);
 api.use('/dashboard', dashboardRouter);
 api.use('/settings', settingsRouter);
 api.use('/templates', templatesRouter);
+api.use('/diagnostics', diagnosticsRouter);
 
 app.use(base, api);
 
