@@ -139,6 +139,9 @@ async function handleJob(job: Job<SendJob>) {
        VALUES ($1,$2,$3,$4,'delivered',$5,$6,$7)`,
       [userId, campaignId, r.email, smtp.id, info.messageId ?? null, smtpResp, rtMs]
     );
+    await query(
+      `UPDATE smtp_configs SET last_success_at=now() WHERE id=$1`, [smtp.id]
+    ).catch(() => {});
     await incrementUsage(userId, 1);
     await reserveGlobalQuota(1).catch(() => {});
   } catch (e: any) {
