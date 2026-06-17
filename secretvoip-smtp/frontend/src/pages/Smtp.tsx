@@ -36,8 +36,25 @@ export default function SmtpPage() {
 
   async function test(id: string) {
     setBusy(true);
-    try { const r = await api<{ ok: boolean; error?: string }>(`/smtp/${id}/test`, { method: 'POST' });
-      alert(r.ok ? 'SMTP test succeeded.' : `SMTP test failed: ${r.error}`); await load();
+    try {
+      const r = await api<{ ok: boolean; error?: string; rt_ms?: number; host?: string; port?: number; tls?: string }>(
+        `/smtp/${id}/test`, { method: 'POST' }
+      );
+      if (r.ok) {
+        alert(
+          `✅ SMTP test succeeded\n\n` +
+          `Connection: OK\nAuthentication: OK\n` +
+          `Endpoint: ${r.host}:${r.port}\nTLS: ${r.tls?.toUpperCase()}\n` +
+          `Round-trip: ${r.rt_ms} ms`
+        );
+      } else {
+        alert(
+          `❌ SMTP test failed\n\n` +
+          `Endpoint: ${r.host}:${r.port}\nTLS: ${r.tls?.toUpperCase()}\n` +
+          `Round-trip: ${r.rt_ms} ms\n\nError: ${r.error}`
+        );
+      }
+      await load();
     } finally { setBusy(false); }
   }
 
