@@ -20,6 +20,8 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_input' });
   const { username, password } = parsed.data;
+  const ip = (req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '') as string;
+  const ua = (req.headers['user-agent'] || '') as string;
 
   const { rows } = await query<{
     id: string; username: string; password_hash: string; role: 'admin' | 'client';
@@ -30,11 +32,25 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   if (!user) return res.status(401).json({ error: 'invalid_credentials' });
   if (user.status === 'suspended') return res.status(403).json({ error: 'suspended' });
   const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+  if (!ok) {
+    await query(
+      `INSERT INTO login_history (user_id, ip, user_agent, success) VALUES ($1,$2,$3,false)`,
+      [user.id, ip, ua]
+    ).catch(() => {});
+    return res.status(401).json({ error: 'invalid_credentials' });
+  }
 
   const token = signToken({
     sub: user.id, username: user.username, role: user.role, fpc: user.force_password_change,
   });
+  await query(
+    `UPDATE users SET last_login_at=now(), last_login_ip=$2, last_active_at=now() WHERE id=$1`,
+    [user.id, ip]
+  ).catch(() => {});
+  await query(
+    `INSERT INTO login_history (user_id, ip, user_agent, success) VALUES ($1,$2,$3,true)`,
+    [user.id, ip, ua]
+  ).catch(() => {});
   await audit(Object.assign(req, { user: { sub: user.id, username, role: user.role, fpc: user.force_password_change } }), 'auth.login');
   res.json({
     token,

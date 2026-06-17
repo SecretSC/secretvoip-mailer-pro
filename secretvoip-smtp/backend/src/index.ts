@@ -14,6 +14,7 @@ import { logsRouter } from './routes/logs';
 import { dashboardRouter } from './routes/dashboard';
 import { settingsRouter } from './routes/settings';
 import { templatesRouter } from './routes/templates';
+import { diagnosticsRouter } from './routes/diagnostics';
 
 const app = express();
 
@@ -43,6 +44,7 @@ api.use('/logs', logsRouter);
 api.use('/dashboard', dashboardRouter);
 api.use('/settings', settingsRouter);
 api.use('/templates', templatesRouter);
+api.use('/diagnostics', diagnosticsRouter);
 
 app.use(base, api);
 

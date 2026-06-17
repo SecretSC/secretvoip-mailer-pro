@@ -251,60 +251,98 @@ campaignsRouter.post('/:id/test', async (req, res) => {
 
 // --- start ---
 campaignsRouter.post('/:id/start', async (req, res) => {
-  const gq = await getGlobalQuota();
-  if (gq.active && gq.exhausted) {
-    return res.status(403).json({ error: 'quota_exhausted', message: 'Global SMTP quota exhausted. Contact administrator.' });
-  }
-  const { rows: cRows } = await query<any>(
-    `SELECT * FROM campaigns WHERE id=$1 AND user_id=$2`, [req.params.id, req.user!.sub]
-  );
-  const c = cRows[0]; if (!c) return res.status(404).json({ error: 'not_found' });
-  if (!['draft', 'paused'].includes(c.status)) return res.status(400).json({ error: 'bad_state' });
-  if (!c.smtp_ids?.length) return res.status(400).json({ error: 'no_smtp' });
-
-  await tx(async (q) => {
-    if (c.status === 'draft') {
-      // Legacy path: if a list_id is set and no inline recipients yet, materialize from contacts.
-      const { rows: existing } = await q<{ n: string }>(
-        `SELECT COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1`, [c.id]
-      );
-      const existingCount = parseInt(existing[0].n, 10);
-      if (existingCount === 0 && c.list_id) {
-        await q(
-          `INSERT INTO campaign_recipients (campaign_id, email, first_name, last_name, company)
-           SELECT $1, email, first_name, last_name, company
-             FROM contacts WHERE user_id=$2 AND list_id=$3`,
-          [c.id, req.user!.sub, c.list_id]
-        );
-      }
-      const { rows: tot } = await q<{ n: string }>(
-        `SELECT COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1`, [c.id]
-      );
-      const total = parseInt(tot[0].n, 10);
-      if (total === 0) throw Object.assign(new Error('no_recipients'), { status: 400, code: 'no_recipients' });
-      await q(
-        `UPDATE campaigns SET total=$1, status='queued', started_at=COALESCE(started_at, now()), updated_at=now()
-          WHERE id=$2`,
-        [total, c.id]
-      );
-    } else {
-      await q(`UPDATE campaigns SET status='queued', updated_at=now() WHERE id=$1`, [c.id]);
+  try {
+    const gq = await getGlobalQuota();
+    if (gq.active && gq.exhausted) {
+      return res.status(403).json({ error: 'quota_exhausted', message: 'Global SMTP quota exhausted. Contact administrator.' });
     }
-  }).catch(e => { throw e; });
+    const { rows: cRows } = await query<any>(
+      `SELECT * FROM campaigns WHERE id=$1 AND user_id=$2`, [req.params.id, req.user!.sub]
+    );
+    const c = cRows[0];
+    if (!c) return res.status(404).json({ error: 'not_found', message: 'Campaign not found.' });
+    if (!['draft', 'paused'].includes(c.status)) {
+      return res.status(400).json({ error: 'bad_state', message: `Campaign is "${c.status}" and cannot be started.` });
+    }
+    if (!c.smtp_ids?.length) {
+      return res.status(400).json({ error: 'no_smtp', message: 'Select at least one SMTP server.' });
+    }
+    // Verify the selected SMTPs still exist and are active for this user
+    const { rows: smtpCheck } = await query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM smtp_configs
+        WHERE user_id=$1 AND status='active' AND id = ANY($2::uuid[])`,
+      [req.user!.sub, c.smtp_ids]
+    );
+    if (parseInt(smtpCheck[0].n, 10) === 0) {
+      return res.status(400).json({ error: 'no_active_smtp', message: 'No active SMTP server matches your campaign selection.' });
+    }
 
-  const { rows: pending } = await query<{ id: string }>(
-    `SELECT id FROM campaign_recipients WHERE campaign_id=$1 AND status IN ('queued','delayed')`,
-    [c.id]
-  );
-  const jobs = pending.map(p => ({
-    name: 'send',
-    data: { recipientId: p.id, campaignId: c.id, userId: req.user!.sub },
-    opts: { jobId: `r:${p.id}` },
-  }));
-  if (jobs.length) await campaignQueue.addBulk(jobs as any);
+    try {
+      await tx(async (q) => {
+        if (c.status === 'draft') {
+          const { rows: existing } = await q<{ n: string }>(
+            `SELECT COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1`, [c.id]
+          );
+          const existingCount = parseInt(existing[0].n, 10);
+          if (existingCount === 0 && c.list_id) {
+            await q(
+              `INSERT INTO campaign_recipients (campaign_id, email, first_name, last_name, company)
+               SELECT $1, email, first_name, last_name, company
+                 FROM contacts WHERE user_id=$2 AND list_id=$3`,
+              [c.id, req.user!.sub, c.list_id]
+            );
+          }
+          const { rows: tot } = await q<{ n: string }>(
+            `SELECT COUNT(*)::text AS n FROM campaign_recipients WHERE campaign_id=$1`, [c.id]
+          );
+          const total = parseInt(tot[0].n, 10);
+          if (total === 0) throw Object.assign(new Error('no_recipients'), { status: 400, code: 'no_recipients' });
+          await q(
+            `UPDATE campaigns SET total=$1, status='queued', started_at=COALESCE(started_at, now()), updated_at=now()
+              WHERE id=$2`,
+            [total, c.id]
+          );
+        } else {
+          await q(`UPDATE campaigns SET status='queued', updated_at=now() WHERE id=$1`, [c.id]);
+        }
+      });
+    } catch (e: any) {
+      if (e?.code === 'no_recipients') {
+        return res.status(400).json({ error: 'no_recipients', message: 'Add at least one valid recipient before sending.' });
+      }
+      return res.status(500).json({ error: 'database_error', message: e?.message ?? 'Failed to prepare campaign.' });
+    }
 
-  await audit(req, 'campaigns.start', c.id, { queued: jobs.length });
-  res.json({ ok: true, queued: jobs.length });
+    const { rows: pending } = await query<{ id: string }>(
+      `SELECT id FROM campaign_recipients WHERE campaign_id=$1 AND status IN ('queued','delayed')`,
+      [c.id]
+    );
+    const jobs = pending.map(p => ({
+      name: 'send',
+      data: { recipientId: p.id, campaignId: c.id, userId: req.user!.sub },
+      opts: { jobId: `r:${p.id}` },
+    }));
+    if (jobs.length) {
+      try {
+        await campaignQueue.addBulk(jobs as any);
+      } catch (e: any) {
+        // Roll the campaign back to draft so the user can retry
+        await query(`UPDATE campaigns SET status='draft', updated_at=now() WHERE id=$1`, [c.id]).catch(() => {});
+        return res.status(503).json({
+          error: 'worker_unavailable',
+          message: 'Worker unavailable — could not queue the campaign. ' + (e?.message ?? ''),
+        });
+      }
+    }
+
+    await audit(req, 'campaigns.start', c.id, { queued: jobs.length });
+    res.json({ ok: true, queued: jobs.length });
+  } catch (e: any) {
+    return res.status(500).json({
+      error: 'start_failed',
+      message: e?.message ?? 'Unexpected error while starting campaign.',
+    });
+  }
 });
 
 campaignsRouter.post('/:id/pause', async (req, res) => {

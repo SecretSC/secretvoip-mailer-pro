@@ -117,12 +117,19 @@ export default function CampaignEditor() {
       }
       nav(cid ? `/campaigns/${cid}` : '/campaigns');
     } catch (e: any) {
+      const code = e?.code;
       const m = e?.message;
-      setErr(
-        m === 'no_smtp' ? 'Select at least one SMTP server.' :
-        m === 'no_recipients' ? 'Add at least one valid recipient.' :
-        (m ?? 'Save failed')
-      );
+      const map: Record<string, string> = {
+        no_smtp: 'Select at least one SMTP server.',
+        no_active_smtp: 'The selected SMTP server is no longer active. Pick another in SMTP Servers.',
+        no_recipients: 'Add at least one valid recipient.',
+        quota_exhausted: 'Global SMTP quota exhausted. Contact administrator.',
+        worker_unavailable: 'Worker unavailable — queue could not accept the campaign. Try again or contact admin.',
+        service_unavailable: 'Backend temporarily unreachable. Try again in a moment.',
+        bad_state: m || 'Campaign cannot be started in its current state.',
+        database_error: m || 'Database error while preparing campaign.',
+      };
+      setErr(map[code] ?? (m && m !== 'service_unavailable' ? m : 'Send failed — please retry.'));
     } finally { setSaving(false); }
   }
 

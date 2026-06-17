@@ -48,6 +48,7 @@ export default function Layout() {
           <>
             <div className="mt-3 mb-1 px-3 text-[10px] uppercase tracking-widest text-slate-500">Admin</div>
             <Item to="/admin/users" label="User Management" icon="◈" />
+            <Item to="/admin/diagnostics" label="Diagnostics" icon="◐" />
             <Item to="/admin/audit" label="Audit Logs" icon="❒" />
           </>
         )}

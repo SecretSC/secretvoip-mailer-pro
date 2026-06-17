@@ -21,6 +21,7 @@ import AdminUsers from './pages/AdminUsers';
 import AdminClientDetails from './pages/AdminClientDetails';
 import AuditLogs from './pages/AuditLogs';
 import Templates from './pages/Templates';
+import AdminDiagnostics from './pages/AdminDiagnostics';
 import './index.css';
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -50,6 +51,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/admin/users" element={<ProtectedRoute adminOnly><AdminUsers /></ProtectedRoute>} />
             <Route path="/admin/users/:id" element={<ProtectedRoute adminOnly><AdminClientDetails /></ProtectedRoute>} />
             <Route path="/admin/audit" element={<ProtectedRoute adminOnly><AuditLogs /></ProtectedRoute>} />
+            <Route path="/admin/diagnostics" element={<ProtectedRoute adminOnly><AdminDiagnostics /></ProtectedRoute>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
