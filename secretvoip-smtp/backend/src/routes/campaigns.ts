@@ -5,6 +5,7 @@ import { requireAuth, requirePasswordOk } from '../auth/middleware';
 import { audit } from '../lib/audit';
 import { campaignQueue } from '../queue';
 import { buildTransport, renderTemplate } from '../lib/mailer';
+import { getGlobalQuota } from '../lib/quota';
 
 export const campaignsRouter = Router();
 campaignsRouter.use(requireAuth, requirePasswordOk);
@@ -250,6 +251,10 @@ campaignsRouter.post('/:id/test', async (req, res) => {
 
 // --- start ---
 campaignsRouter.post('/:id/start', async (req, res) => {
+  const gq = await getGlobalQuota();
+  if (gq.active && gq.exhausted) {
+    return res.status(403).json({ error: 'quota_exhausted', message: 'Global SMTP quota exhausted. Contact administrator.' });
+  }
   const { rows: cRows } = await query<any>(
     `SELECT * FROM campaigns WHERE id=$1 AND user_id=$2`, [req.params.id, req.user!.sub]
   );
