@@ -350,9 +350,21 @@ campaignsRouter.post('/:id/cancel', async (req, res) => {
 });
 
 // Alias for stop = cancel (front-end terminology)
-campaignsRouter.post('/:id/stop', async (req, res, next) => {
-  req.url = `/${req.params.id}/cancel`;
-  next();
+campaignsRouter.post('/:id/stop', async (req, res) => {
+  await tx(async (q) => {
+    await q(
+      `UPDATE campaigns SET status='cancelled', completed_at=now(), updated_at=now()
+        WHERE id=$1 AND user_id=$2 AND status IN ('draft','queued','processing','paused')`,
+      [req.params.id, req.user!.sub]
+    );
+    await q(
+      `UPDATE campaign_recipients SET status='cancelled', updated_at=now()
+        WHERE campaign_id=$1 AND status IN ('queued','processing','delayed')`,
+      [req.params.id]
+    );
+  });
+  await audit(req, 'campaigns.stop', req.params.id);
+  res.json({ ok: true });
 });
 
 campaignsRouter.delete('/:id', async (req, res) => {
