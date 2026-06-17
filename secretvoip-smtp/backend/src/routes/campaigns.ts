@@ -324,7 +324,7 @@ campaignsRouter.post('/:id/start', async (req, res) => {
     const jobs = pending.map(p => ({
       name: 'send',
       data: { recipientId: p.id, campaignId: c.id, userId: req.user!.sub },
-      opts: { jobId: `r:${p.id}` },
+      opts: { jobId: `r__${p.id}` },
     }));
     if (jobs.length) {
       // Pre-flight: Redis reachable?
@@ -423,7 +423,7 @@ campaignsRouter.post('/:id/resume', async (req, res) => {
   const jobs = pending.map(p => ({
     name: 'send',
     data: { recipientId: p.id, campaignId: req.params.id, userId: req.user!.sub },
-    opts: { jobId: `r:${p.id}` },
+    opts: { jobId: `r__${p.id}` },
   }));
   if (jobs.length) await campaignQueue.addBulk(jobs as any);
   await audit(req, 'campaigns.resume', req.params.id);
