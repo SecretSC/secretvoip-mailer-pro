@@ -29,6 +29,14 @@ function Counter({ label, value, tone = 'text-slate-200' }: { label: string; val
   );
 }
 
+function formatEta(sec: number): string {
+  if (!sec || !Number.isFinite(sec) || sec <= 0) return '—';
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60); const s = sec % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60); const rm = m % 60;
+  return `${h}h ${rm}m`;
+
 interface PerfInfo {
   worker_concurrency: number; emails_per_second: number;
   max_smtp_connections: number; queue_batch_size: number;
