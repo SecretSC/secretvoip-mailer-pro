@@ -11,7 +11,8 @@ export const settingsRouter = Router();
 settingsRouter.get('/', requireAuth, requirePasswordOk, async (_req, res) => {
   const { rows } = await query(
     `SELECT site_name, tagline, support_telegram, maintenance_mode,
-            global_quota_total, global_quota_used, global_quota_reset_at
+            global_quota_total, global_quota_used, global_quota_reset_at,
+            worker_concurrency, emails_per_second, max_smtp_connections, queue_batch_size
        FROM settings WHERE id=1`
   );
   const quota = await getGlobalQuota();
@@ -29,6 +30,10 @@ const schema = z.object({
   support_telegram: z.string().max(120).optional(),
   maintenance_mode: z.boolean().optional(),
   global_quota_total: z.number().int().min(0).max(10_000_000_000).optional(),
+  worker_concurrency:   z.number().int().min(1).max(2000).optional(),
+  emails_per_second:    z.number().int().min(1).max(10000).optional(),
+  max_smtp_connections: z.number().int().min(1).max(1000).optional(),
+  queue_batch_size:     z.number().int().min(50).max(5000).optional(),
 });
 
 settingsRouter.patch('/', requireAuth, requirePasswordOk, requireRole('admin'), async (req, res) => {
