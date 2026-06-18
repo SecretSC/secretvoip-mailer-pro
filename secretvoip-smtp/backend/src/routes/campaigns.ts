@@ -201,7 +201,11 @@ const recipientsSchema = z.object({
   replace: z.boolean().optional(),
 });
 campaignsRouter.post('/:id/recipients', async (req, res) => {
-  const v = recipientsSchema.parse(req.body);
+  const rs = recipientsSchema.safeParse(req.body);
+  if (!rs.success) {
+    return res.status(400).json({ error: 'validation_error', issues: rs.error.issues.map(i => ({ path: i.path.join('.'), message: i.message })) });
+  }
+  const v = rs.data;
   const { rows: cRows } = await query<{ status: string }>(
     `SELECT status FROM campaigns WHERE id=$1 AND user_id=$2`,
     [req.params.id, req.user!.sub]
