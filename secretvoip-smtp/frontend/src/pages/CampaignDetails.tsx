@@ -29,21 +29,55 @@ function Counter({ label, value, tone = 'text-slate-200' }: { label: string; val
   );
 }
 
+interface PerfInfo {
+  worker_concurrency: number; emails_per_second: number;
+  max_smtp_connections: number; queue_batch_size: number;
+}
+
 export default function CampaignDetails() {
   const { id } = useParams();
   const nav = useNavigate();
   const [c, setC] = useState<C | null>(null);
   const [b, setB] = useState<Breakdown | null>(null);
   const [busy, setBusy] = useState(false);
+  const [perf, setPerf] = useState<PerfInfo | null>(null);
+  // Speed sampling: rolling samples of (timestamp, accepted, failed)
+  const samples = useRef<Array<{ t: number; acc: number; fail: number }>>([]);
+  const [speed, setSpeed] = useState({ acceptedPerMin: 0, failedPerMin: 0, etaSec: 0 });
 
   async function load() {
     if (!id) return;
     try {
       const r = await api<{ campaign: C; breakdown: Breakdown }>(`/campaigns/${id}`);
       setC(r.campaign); setB(r.breakdown);
+      const acc = (r.campaign.accepted ?? r.campaign.delivered ?? 0);
+      const fail = r.campaign.failed + r.campaign.bounced;
+      const now = Date.now();
+      const arr = samples.current;
+      arr.push({ t: now, acc, fail });
+      // keep last 60s
+      while (arr.length > 1 && now - arr[0].t > 60_000) arr.shift();
+      if (arr.length >= 2) {
+        const first = arr[0]; const last = arr[arr.length - 1];
+        const dtMin = Math.max(0.001, (last.t - first.t) / 60_000);
+        const acceptedPerMin = Math.round((last.acc - first.acc) / dtMin);
+        const failedPerMin   = Math.round((last.fail - first.fail) / dtMin);
+        const remaining = Math.max(0, (r.campaign.total ?? 0) - (last.acc + last.fail + r.campaign.invalid));
+        const ratePerSec = (last.acc - first.acc) / Math.max(0.001, (last.t - first.t) / 1000);
+        const etaSec = ratePerSec > 0 ? Math.round(remaining / ratePerSec) : 0;
+        setSpeed({ acceptedPerMin, failedPerMin, etaSec });
+      }
     } catch {}
   }
   useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t); }, [id]);
+  useEffect(() => {
+    api<{ settings: PerfInfo }>('/settings').then(r => setPerf({
+      worker_concurrency:   r.settings.worker_concurrency   ?? 50,
+      emails_per_second:    r.settings.emails_per_second    ?? 100,
+      max_smtp_connections: r.settings.max_smtp_connections ?? 50,
+      queue_batch_size:     r.settings.queue_batch_size     ?? 500,
+    })).catch(() => {});
+  }, []);
 
   async function action(name: 'start' | 'pause' | 'resume' | 'stop') {
     if (!id) return;
