@@ -6,6 +6,21 @@ import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
 import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
+import { loadPerfSettings, getPerfSettingsSync } from './lib/perfSettings';
+
+// Detect SMTP throttling / rate-limit / soft-fail errors.
+// Returns ms to wait before retry, or 0 if not throttled.
+function detectSmtpThrottle(e: any): number {
+  const msg = String(e?.message ?? e ?? '').toLowerCase();
+  const code = String(e?.responseCode ?? e?.code ?? '');
+  if (/^(421|450|451|452|454)$/.test(code)) return 30_000;
+  if (/\b(421|450|451|452|454)\b/.test(msg)) return 30_000;
+  if (/too many (connections|messages|recipients)/.test(msg)) return 60_000;
+  if (/rate ?limit|throttl|try again later|temporar/.test(msg)) return 45_000;
+  if (/etimedout|esockettimedout|econnreset|econnrefused|timeout/.test(msg)) return 15_000;
+  return 0;
+}
+
 
 // ---- Worker heartbeat (read by /diagnostics) -----------------------------
 const WORKER_HEARTBEAT_KEY = 'smtp:worker:heartbeat';
@@ -126,7 +141,8 @@ async function handleJob(job: Job<SendJob>) {
 
   const startedAt = Date.now();
   try {
-    const t = buildTransport(smtp);
+    const perf = getPerfSettingsSync();
+    const t = buildTransport(smtp, { maxConnections: perf.max_smtp_connections });
     const fromName = c.from_name || smtp.from_name;
     const info = await t.sendMail({
       from: `"${fromName}" <${smtp.from_email}>`,
@@ -186,6 +202,15 @@ async function handleJob(job: Job<SendJob>) {
       `UPDATE smtp_configs SET last_failed_at=now(), last_failed_error=$2 WHERE id=$1`,
       [smtp.id, msg]
     ).catch(() => {});
+    const throttleMs = detectSmtpThrottle(e);
+    if (throttleMs > 0) {
+      // SMTP rate-limited / soft fail — reset recipient to queued and back off
+      await query(
+        `UPDATE campaign_recipients SET status='queued', updated_at=now() WHERE id=$1`,
+        [recipientId]
+      ).catch(() => {});
+      throw Object.assign(new Error('smtp_throttled:' + msg), { retryAfterMs: throttleMs });
+    }
     if (!bounced && job.attemptsMade < (job.opts.attempts ?? 3)) {
       throw e; // let BullMQ retry with backoff
     }
@@ -212,6 +237,10 @@ async function maybeComplete(campaignId: string) {
   }
 }
 
+// Boot perf settings synchronously (best-effort) then start worker.
+const initialPerf = { ...getPerfSettingsSync() };
+loadPerfSettings(true).catch(() => {});
+
 const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   try {
     await handleJob(job);
@@ -225,9 +254,24 @@ const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   }
 }, {
   connection: bullConnection,
-  concurrency: env.WORKER_CONCURRENCY,
-  limiter: { max: env.WORKER_RATE_PER_SECOND, duration: 1000 },
+  concurrency: Math.max(env.WORKER_CONCURRENCY, initialPerf.worker_concurrency),
+  limiter: { max: initialPerf.emails_per_second, duration: 1000 },
 });
+
+// Live-apply admin perf changes (concurrency only — BullMQ rate limiter
+// is fixed at Worker construction, so changing emails_per_second takes
+// effect on the next worker restart).
+let lastApplied = { conc: initialPerf.worker_concurrency };
+setInterval(async () => {
+  try {
+    const p = await loadPerfSettings(true);
+    if (p.worker_concurrency !== lastApplied.conc) {
+      (worker as any).concurrency = p.worker_concurrency;
+      lastApplied.conc = p.worker_concurrency;
+      logger.info({ concurrency: p.worker_concurrency }, 'worker_perf_applied');
+    }
+  } catch {}
+}, 10_000).unref?.();
 
 worker.on('ready', () => {
   console.log('WORKER READY pid=' + process.pid + ' queue=' + CAMPAIGN_QUEUE);

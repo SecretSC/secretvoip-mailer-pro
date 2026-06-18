@@ -21,8 +21,8 @@ export const env = {
   DATABASE_URL: req('DATABASE_URL'),
   REDIS_URL: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379/3',
 
-  WORKER_CONCURRENCY: parseInt(process.env.WORKER_CONCURRENCY ?? '10', 10),
-  WORKER_RATE_PER_SECOND: parseInt(process.env.WORKER_RATE_PER_SECOND ?? '20', 10),
+  WORKER_CONCURRENCY: parseInt(process.env.WORKER_CONCURRENCY ?? '50', 10),
+  WORKER_RATE_PER_SECOND: parseInt(process.env.WORKER_RATE_PER_SECOND ?? '100', 10),
 
   DEFAULT_DAILY_LIMIT: parseInt(process.env.DEFAULT_DAILY_LIMIT ?? '1000000', 10),
   DEFAULT_MONTHLY_LIMIT: parseInt(process.env.DEFAULT_MONTHLY_LIMIT ?? '30000000', 10),

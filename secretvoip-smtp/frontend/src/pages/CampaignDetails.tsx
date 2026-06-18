@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import GlobalQuotaCard from '../components/GlobalQuotaCard';
@@ -29,21 +29,63 @@ function Counter({ label, value, tone = 'text-slate-200' }: { label: string; val
   );
 }
 
+function formatEta(sec: number): string {
+  if (!sec || !Number.isFinite(sec) || sec <= 0) return '—';
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60); const s = sec % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60); const rm = m % 60;
+  return `${h}h ${rm}m`;
+
+interface PerfInfo {
+  worker_concurrency: number; emails_per_second: number;
+  max_smtp_connections: number; queue_batch_size: number;
+}
+
 export default function CampaignDetails() {
   const { id } = useParams();
   const nav = useNavigate();
   const [c, setC] = useState<C | null>(null);
   const [b, setB] = useState<Breakdown | null>(null);
   const [busy, setBusy] = useState(false);
+  const [perf, setPerf] = useState<PerfInfo | null>(null);
+  // Speed sampling: rolling samples of (timestamp, accepted, failed)
+  const samples = useRef<Array<{ t: number; acc: number; fail: number }>>([]);
+  const [speed, setSpeed] = useState({ acceptedPerMin: 0, failedPerMin: 0, etaSec: 0 });
 
   async function load() {
     if (!id) return;
     try {
       const r = await api<{ campaign: C; breakdown: Breakdown }>(`/campaigns/${id}`);
       setC(r.campaign); setB(r.breakdown);
+      const acc = (r.campaign.accepted ?? r.campaign.delivered ?? 0);
+      const fail = r.campaign.failed + r.campaign.bounced;
+      const now = Date.now();
+      const arr = samples.current;
+      arr.push({ t: now, acc, fail });
+      // keep last 60s
+      while (arr.length > 1 && now - arr[0].t > 60_000) arr.shift();
+      if (arr.length >= 2) {
+        const first = arr[0]; const last = arr[arr.length - 1];
+        const dtMin = Math.max(0.001, (last.t - first.t) / 60_000);
+        const acceptedPerMin = Math.round((last.acc - first.acc) / dtMin);
+        const failedPerMin   = Math.round((last.fail - first.fail) / dtMin);
+        const remaining = Math.max(0, (r.campaign.total ?? 0) - (last.acc + last.fail + r.campaign.invalid));
+        const ratePerSec = (last.acc - first.acc) / Math.max(0.001, (last.t - first.t) / 1000);
+        const etaSec = ratePerSec > 0 ? Math.round(remaining / ratePerSec) : 0;
+        setSpeed({ acceptedPerMin, failedPerMin, etaSec });
+      }
     } catch {}
   }
   useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t); }, [id]);
+  useEffect(() => {
+    api<{ settings: PerfInfo }>('/settings').then(r => setPerf({
+      worker_concurrency:   r.settings.worker_concurrency   ?? 50,
+      emails_per_second:    r.settings.emails_per_second    ?? 100,
+      max_smtp_connections: r.settings.max_smtp_connections ?? 50,
+      queue_batch_size:     r.settings.queue_batch_size     ?? 500,
+    })).catch(() => {});
+  }, []);
 
   async function action(name: 'start' | 'pause' | 'resume' | 'stop') {
     if (!id) return;
@@ -117,6 +159,25 @@ export default function CampaignDetails() {
         <Counter label="Queued" value={b.queued} tone="text-amber-300" />
         <Counter label="Processing" value={b.processing} tone="text-amber-300" />
         <Counter label="Cancelled" value={b.cancelled} tone="text-slate-400" />
+      </div>
+
+      <div className="card">
+        <div className="text-sm font-semibold mb-3">Live Throughput</div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <Counter label="Speed (emails/min)" value={speed.acceptedPerMin} tone="text-emerald-300" />
+          <Counter label="Failed/min" value={speed.failedPerMin} tone="text-crimson-400" />
+          <div className="glass rounded-xl p-4">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">ETA</div>
+            <div className="text-2xl font-semibold tabular-nums text-white">{formatEta(speed.etaSec)}</div>
+          </div>
+          <Counter label="Active connections" value={Math.min(b.processing, perf?.max_smtp_connections ?? 0) || b.processing} tone="text-sky-300" />
+          <Counter label="Rate limit (eps)" value={perf?.emails_per_second ?? 0} tone="text-slate-300" />
+        </div>
+        {perf && (
+          <div className="text-[11px] text-slate-500 mt-3">
+            Worker concurrency {perf.worker_concurrency} · Max SMTP connections {perf.max_smtp_connections} · Batch {perf.queue_batch_size}
+          </div>
+        )}
       </div>
 
       <div className="card text-xs text-slate-400 space-y-1">
