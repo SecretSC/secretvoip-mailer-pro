@@ -244,7 +244,9 @@ campaignsRouter.post('/:id/duplicate', async (req, res) => {
 // --- test send ---
 const testSchema = z.object({ email: z.string().email() });
 campaignsRouter.post('/:id/test', async (req, res) => {
-  const { email } = testSchema.parse(req.body);
+  const ts = testSchema.safeParse(req.body);
+  if (!ts.success) return res.status(400).json({ error: 'validation_error', issues: ts.error.issues.map(i => ({ path: i.path.join('.'), message: i.message })) });
+  const { email } = ts.data;
   const { rows: cRows } = await query<any>(
     `SELECT * FROM campaigns WHERE id=$1 AND user_id=$2`, [req.params.id, req.user!.sub]
   );
