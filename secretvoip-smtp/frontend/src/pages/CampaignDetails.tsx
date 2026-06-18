@@ -153,6 +153,25 @@ export default function CampaignDetails() {
         <Counter label="Cancelled" value={b.cancelled} tone="text-slate-400" />
       </div>
 
+      <div className="card">
+        <div className="text-sm font-semibold mb-3">Live Throughput</div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <Counter label="Speed (emails/min)" value={speed.acceptedPerMin} tone="text-emerald-300" />
+          <Counter label="Failed/min" value={speed.failedPerMin} tone="text-crimson-400" />
+          <div className="glass rounded-xl p-4">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">ETA</div>
+            <div className="text-2xl font-semibold tabular-nums text-white">{formatEta(speed.etaSec)}</div>
+          </div>
+          <Counter label="Active connections" value={Math.min(b.processing, perf?.max_smtp_connections ?? 0) || b.processing} tone="text-sky-300" />
+          <Counter label="Rate limit (eps)" value={perf?.emails_per_second ?? 0} tone="text-slate-300" />
+        </div>
+        {perf && (
+          <div className="text-[11px] text-slate-500 mt-3">
+            Worker concurrency {perf.worker_concurrency} · Max SMTP connections {perf.max_smtp_connections} · Batch {perf.queue_batch_size}
+          </div>
+        )}
+      </div>
+
       <div className="card text-xs text-slate-400 space-y-1">
         <div>Created {new Date(c.created_at).toLocaleString()}</div>
         {c.started_at && <div>Started {new Date(c.started_at).toLocaleString()}</div>}
