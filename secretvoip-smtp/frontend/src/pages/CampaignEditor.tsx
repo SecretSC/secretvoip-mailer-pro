@@ -142,6 +142,11 @@ export default function CampaignEditor() {
         service_unavailable: 'Backend temporarily unreachable. Try again in a moment.',
         bad_state: m || 'Campaign cannot be started in its current state.',
         database_error: m || 'Database error while preparing campaign.',
+        validation_error: (() => {
+          const issues = (e?.details?.issues || e?.issues) as Array<{ path: string; message: string }> | undefined;
+          if (issues && issues.length) return issues.map(i => `${i.path}: ${i.message}`).join('; ');
+          return 'Some fields are invalid. Check campaign name, subject and recipients.';
+        })(),
       };
       setErr(map[code] ?? (m && m !== 'service_unavailable' ? m : 'Send failed — please retry.'));
     } finally { setSaving(false); }
