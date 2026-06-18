@@ -99,10 +99,24 @@ export default function CampaignEditor() {
   }
 
   async function save(start: boolean) {
-    setErr(null); setSaving(true);
+    setErr(null);
+    const trimmedName = (name || '').trim();
+    const trimmedSubject = (subject || '').trim();
+    if (!trimmedName) {
+      setErr('Campaign name is required.');
+      return;
+    }
+    if (!trimmedSubject) {
+      setErr('Subject is required.');
+      return;
+    }
+    // Keep state in sync with what we send
+    if (trimmedName !== name) setName(trimmedName);
+    if (trimmedSubject !== subject) setSubject(trimmedSubject);
+    setSaving(true);
     try {
       const body: any = {
-        name, subject, from_name: fromName || null, html, text,
+        name: trimmedName, subject: trimmedSubject, from_name: fromName || null, html, text,
         smtp_ids: smtpIds,
         recipients: parsed.valid,
       };
@@ -128,6 +142,11 @@ export default function CampaignEditor() {
         service_unavailable: 'Backend temporarily unreachable. Try again in a moment.',
         bad_state: m || 'Campaign cannot be started in its current state.',
         database_error: m || 'Database error while preparing campaign.',
+        validation_error: (() => {
+          const issues = (e?.details?.issues || e?.issues) as Array<{ path: string; message: string }> | undefined;
+          if (issues && issues.length) return issues.map(i => `${i.path}: ${i.message}`).join('; ');
+          return 'Some fields are invalid. Check campaign name, subject and recipients.';
+        })(),
       };
       setErr(map[code] ?? (m && m !== 'service_unavailable' ? m : 'Send failed — please retry.'));
     } finally { setSaving(false); }
