@@ -51,10 +51,29 @@ app.use(base, api);
 // 404 for unknown api paths
 app.use(base, (_req, res) => res.status(404).json({ error: 'not_found' }));
 
-// global error handler
+// global error handler — never let validation errors crash the process
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  logger.error({ err }, 'unhandled_error');
+  // Zod validation errors → 400
+  if (err && (err.name === 'ZodError' || Array.isArray(err.issues))) {
+    const issues = (err.issues ?? []).map((i: any) => ({ path: Array.isArray(i.path) ? i.path.join('.') : String(i.path ?? ''), message: i.message }));
+    logger.warn({ issues }, 'validation_error');
+    return res.status(400).json({ error: 'validation_error', issues });
+  }
+  // express.json body parse errors
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'invalid_json' });
+  }
+  logger.error({ err: { message: err?.message, stack: err?.stack, code: err?.code } }, 'unhandled_error');
   res.status(err?.status ?? 500).json({ error: err?.code ?? 'internal_error', message: err?.message ?? 'unexpected' });
+});
+
+// Last-resort safety nets: log but DO NOT exit, so systemd doesn't restart
+// the API on a single bad request (which logs users out).
+process.on('unhandledRejection', (reason: any) => {
+  logger.error({ err: { message: reason?.message, stack: reason?.stack, name: reason?.name } }, 'unhandled_rejection');
+});
+process.on('uncaughtException', (err: any) => {
+  logger.error({ err: { message: err?.message, stack: err?.stack, name: err?.name } }, 'uncaught_exception');
 });
 
 const server = app.listen(env.PORT, env.HOST, () => {
