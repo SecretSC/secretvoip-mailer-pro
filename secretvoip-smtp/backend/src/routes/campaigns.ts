@@ -145,7 +145,19 @@ campaignsRouter.post('/', async (req, res) => {
 });
 
 campaignsRouter.patch('/:id', async (req, res) => {
-  const v = upsertSchema.partial().parse(req.body);
+  // Strip empty-string fields so the frontend can safely resend the full body
+  // without tripping min(1) validators (e.g. name="" on Send Campaign).
+  const cleanBody: Record<string, any> = {};
+  for (const [k, val] of Object.entries(req.body ?? {})) {
+    if (val === '' || val === undefined) continue;
+    cleanBody[k] = val;
+  }
+  const parsedSchema = upsertSchema.partial().safeParse(cleanBody);
+  if (!parsedSchema.success) {
+    const issues = parsedSchema.error.issues.map(i => ({ path: i.path.join('.'), message: i.message }));
+    return res.status(400).json({ error: 'validation_error', issues });
+  }
+  const v = parsedSchema.data;
   const fields: string[] = []; const vals: any[] = [];
   for (const [k, val] of Object.entries(v)) {
     if (val === undefined) continue;
