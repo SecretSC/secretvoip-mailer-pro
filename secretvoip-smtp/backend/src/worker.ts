@@ -202,6 +202,15 @@ async function handleJob(job: Job<SendJob>) {
       `UPDATE smtp_configs SET last_failed_at=now(), last_failed_error=$2 WHERE id=$1`,
       [smtp.id, msg]
     ).catch(() => {});
+    const throttleMs = detectSmtpThrottle(e);
+    if (throttleMs > 0) {
+      // SMTP rate-limited / soft fail — reset recipient to queued and back off
+      await query(
+        `UPDATE campaign_recipients SET status='queued', updated_at=now() WHERE id=$1`,
+        [recipientId]
+      ).catch(() => {});
+      throw Object.assign(new Error('smtp_throttled:' + msg), { retryAfterMs: throttleMs });
+    }
     if (!bounced && job.attemptsMade < (job.opts.attempts ?? 3)) {
       throw e; // let BullMQ retry with backoff
     }
