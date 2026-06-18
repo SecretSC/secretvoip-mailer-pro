@@ -116,7 +116,12 @@ async function insertRecipients(campaignId: string, emails: string[]) {
 }
 
 campaignsRouter.post('/', async (req, res) => {
-  const v = upsertSchema.parse(req.body);
+  const parsedSchema = upsertSchema.safeParse(req.body);
+  if (!parsedSchema.success) {
+    const issues = parsedSchema.error.issues.map(i => ({ path: i.path.join('.'), message: i.message }));
+    return res.status(400).json({ error: 'validation_error', issues });
+  }
+  const v = parsedSchema.data;
   const parsed = parseRecipients(v.recipients);
   const { rows } = await query<{ id: string }>(
     `INSERT INTO campaigns (user_id, name, subject, from_name, html, text, list_id, smtp_ids)
