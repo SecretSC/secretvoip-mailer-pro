@@ -99,10 +99,24 @@ export default function CampaignEditor() {
   }
 
   async function save(start: boolean) {
-    setErr(null); setSaving(true);
+    setErr(null);
+    const trimmedName = (name || '').trim();
+    const trimmedSubject = (subject || '').trim();
+    if (!trimmedName) {
+      setErr('Campaign name is required.');
+      return;
+    }
+    if (!trimmedSubject) {
+      setErr('Subject is required.');
+      return;
+    }
+    // Keep state in sync with what we send
+    if (trimmedName !== name) setName(trimmedName);
+    if (trimmedSubject !== subject) setSubject(trimmedSubject);
+    setSaving(true);
     try {
       const body: any = {
-        name, subject, from_name: fromName || null, html, text,
+        name: trimmedName, subject: trimmedSubject, from_name: fromName || null, html, text,
         smtp_ids: smtpIds,
         recipients: parsed.valid,
       };
