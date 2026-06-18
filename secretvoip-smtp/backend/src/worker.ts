@@ -6,6 +6,21 @@ import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
 import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
+import { loadPerfSettings, getPerfSettingsSync } from './lib/perfSettings';
+
+// Detect SMTP throttling / rate-limit / soft-fail errors.
+// Returns ms to wait before retry, or 0 if not throttled.
+function detectSmtpThrottle(e: any): number {
+  const msg = String(e?.message ?? e ?? '').toLowerCase();
+  const code = String(e?.responseCode ?? e?.code ?? '');
+  if (/^(421|450|451|452|454)$/.test(code)) return 30_000;
+  if (/\b(421|450|451|452|454)\b/.test(msg)) return 30_000;
+  if (/too many (connections|messages|recipients)/.test(msg)) return 60_000;
+  if (/rate ?limit|throttl|try again later|temporar/.test(msg)) return 45_000;
+  if (/etimedout|esockettimedout|econnreset|econnrefused|timeout/.test(msg)) return 15_000;
+  return 0;
+}
+
 
 // ---- Worker heartbeat (read by /diagnostics) -----------------------------
 const WORKER_HEARTBEAT_KEY = 'smtp:worker:heartbeat';
