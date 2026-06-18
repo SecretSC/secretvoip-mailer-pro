@@ -141,7 +141,8 @@ async function handleJob(job: Job<SendJob>) {
 
   const startedAt = Date.now();
   try {
-    const t = buildTransport(smtp);
+    const perf = getPerfSettingsSync();
+    const t = buildTransport(smtp, { maxConnections: perf.max_smtp_connections });
     const fromName = c.from_name || smtp.from_name;
     const info = await t.sendMail({
       from: `"${fromName}" <${smtp.from_email}>`,
