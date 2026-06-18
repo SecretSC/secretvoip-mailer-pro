@@ -357,10 +357,17 @@ campaignsRouter.post('/:id/start', async (req, res) => {
       }
 
       try {
-        const added = await campaignQueue.addBulk(jobs as any);
-        console.log('QUEUE ADD SUCCESS campaign=' + c.id + ' added=' + added.length);
+        const perf = await loadPerfSettings();
+        const BATCH = perf.queue_batch_size;
+        let totalAdded = 0;
+        for (let i = 0; i < jobs.length; i += BATCH) {
+          const slice = jobs.slice(i, i + BATCH);
+          const added = await campaignQueue.addBulk(slice as any);
+          totalAdded += added.length;
+        }
+        console.log('QUEUE ADD SUCCESS campaign=' + c.id + ' added=' + totalAdded + ' batch=' + BATCH);
         await redis.set(LAST_INSERT_KEY, JSON.stringify({
-          at: Date.now(), campaignId: c.id, count: added.length,
+          at: Date.now(), campaignId: c.id, count: totalAdded,
         }), 'EX', 86400).catch(() => {});
       } catch (e: any) {
         console.error('QUEUE ADD FAILED bulk', e);
