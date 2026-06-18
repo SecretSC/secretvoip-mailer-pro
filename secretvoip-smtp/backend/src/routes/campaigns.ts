@@ -7,6 +7,7 @@ import { campaignQueue, queueEventsState } from '../queue';
 import { redis, bullConnection } from '../redis';
 import { buildTransport, renderTemplate } from '../lib/mailer';
 import { getGlobalQuota } from '../lib/quota';
+import { loadPerfSettings } from '../lib/perfSettings';
 
 export const campaignsRouter = Router();
 campaignsRouter.use(requireAuth, requirePasswordOk);
