@@ -237,6 +237,10 @@ async function maybeComplete(campaignId: string) {
   }
 }
 
+// Boot perf settings synchronously (best-effort) then start worker.
+const initialPerf = { ...getPerfSettingsSync() };
+loadPerfSettings(true).catch(() => {});
+
 const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   try {
     await handleJob(job);
@@ -250,9 +254,24 @@ const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   }
 }, {
   connection: bullConnection,
-  concurrency: env.WORKER_CONCURRENCY,
-  limiter: { max: env.WORKER_RATE_PER_SECOND, duration: 1000 },
+  concurrency: Math.max(env.WORKER_CONCURRENCY, initialPerf.worker_concurrency),
+  limiter: { max: initialPerf.emails_per_second, duration: 1000 },
 });
+
+// Live-apply admin perf changes (concurrency only — BullMQ rate limiter
+// is fixed at Worker construction, so changing emails_per_second takes
+// effect on the next worker restart).
+let lastApplied = { conc: initialPerf.worker_concurrency };
+setInterval(async () => {
+  try {
+    const p = await loadPerfSettings(true);
+    if (p.worker_concurrency !== lastApplied.conc) {
+      (worker as any).concurrency = p.worker_concurrency;
+      lastApplied.conc = p.worker_concurrency;
+      logger.info({ concurrency: p.worker_concurrency }, 'worker_perf_applied');
+    }
+  } catch {}
+}, 10_000).unref?.();
 
 worker.on('ready', () => {
   console.log('WORKER READY pid=' + process.pid + ' queue=' + CAMPAIGN_QUEUE);
