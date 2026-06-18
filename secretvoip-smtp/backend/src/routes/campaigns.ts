@@ -433,7 +433,13 @@ campaignsRouter.post('/:id/resume', async (req, res) => {
     data: { recipientId: p.id, campaignId: req.params.id, userId: req.user!.sub },
     opts: { jobId: `r__${p.id}` },
   }));
-  if (jobs.length) await campaignQueue.addBulk(jobs as any);
+  if (jobs.length) {
+    const perf = await loadPerfSettings();
+    const BATCH = perf.queue_batch_size;
+    for (let i = 0; i < jobs.length; i += BATCH) {
+      await campaignQueue.addBulk(jobs.slice(i, i + BATCH) as any);
+    }
+  }
   await audit(req, 'campaigns.resume', req.params.id);
   res.json({ ok: true, queued: jobs.length });
 });
