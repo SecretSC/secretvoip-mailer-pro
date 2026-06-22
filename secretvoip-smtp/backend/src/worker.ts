@@ -5,7 +5,7 @@ import { bullConnection, redis } from './redis';
 import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
-import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
+import { incrementUsage, reserveGlobalQuota, getGlobalQuota, reserveUserQuota, getUserQuota } from './lib/quota';
 import { loadPerfSettings, getPerfSettingsSync } from './lib/perfSettings';
 
 // Detect SMTP throttling / rate-limit / soft-fail errors.
