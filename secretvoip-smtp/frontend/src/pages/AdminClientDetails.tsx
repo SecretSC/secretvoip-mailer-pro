@@ -22,6 +22,10 @@ interface Details {
     notes?: string | null; last_login_at?: string | null; last_login_ip?: string | null;
     last_active_at?: string | null; password_visible?: boolean;
   };
+  quota?: {
+    total: number; used: number; remaining: number;
+    active: boolean; exhausted: boolean; updated_at: string | null;
+  };
   smtps: Smtp[];
   campaigns: any[];
   templates: any[];
