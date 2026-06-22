@@ -30,6 +30,7 @@ export default function Dashboard() {
         <p className="text-sm text-slate-400">Operational overview of your sending infrastructure.</p>
       </div>
 
+      <UserQuotaCard />
       <GlobalQuotaCard />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
