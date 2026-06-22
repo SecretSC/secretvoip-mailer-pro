@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db';
 import { requireAuth, requirePasswordOk } from '../auth/middleware';
-import { getQuota } from '../lib/quota';
+import { getQuota, getUserQuota } from '../lib/quota';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth, requirePasswordOk);
