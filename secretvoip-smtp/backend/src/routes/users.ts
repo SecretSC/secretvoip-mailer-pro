@@ -263,6 +263,7 @@ usersRouter.get('/:id/details', async (req, res) => {
 
   res.json({
     user: u[0],
+    quota,
     smtps,
     campaigns: campaigns.map((c: any) => ({ ...c, accepted: c.accepted ?? c.delivered ?? 0 })),
     templates,
