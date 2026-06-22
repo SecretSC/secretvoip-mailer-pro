@@ -191,8 +191,45 @@ async function handleJob(job: Job<SendJob>) {
     const msg = (e?.message ?? String(e)).slice(0, 1000);
     const code: string = e?.code ?? '';
     const smtpResp = e?.response ? String(e.response).slice(0, 1000) : null;
-    const bounced = /^EENVELOPE$|^EMESSAGE$/.test(code) || /55[0-9]/.test(msg);
 
+    // 1) Detect SMTP throttling / soft fails FIRST. These are NOT bounces.
+    //    Mark recipient as 'delayed' (NOT bounced/failed), do not deduct quota,
+    //    do not increment campaign.failed/bounced counters, and retry later
+    //    with adaptive backoff that grows under sustained throttling.
+    const baseThrottleMs = detectSmtpThrottle(e);
+    if (baseThrottleMs > 0) {
+      // Adaptive backoff: count throttle hits per campaign in the last 60s.
+      let hits = 1;
+      try {
+        const k = `smtp:throttle:hits:${campaignId}`;
+        hits = await redis.incr(k);
+        if (hits === 1) await redis.expire(k, 60);
+      } catch {}
+      // Multiplier scales 1x..6x based on recent throttle pressure.
+      const mult = Math.min(6, 1 + Math.floor(hits / 10));
+      const retryAfterMs = baseThrottleMs * mult;
+
+      await query(
+        `UPDATE campaign_recipients
+            SET status='delayed', error=$2, smtp_id=$3, smtp_response=$4, updated_at=now()
+          WHERE id=$1`,
+        [recipientId, 'throttled: ' + msg, smtp.id, smtpResp]
+      ).catch(() => {});
+      await query(
+        `INSERT INTO email_logs (user_id, campaign_id, recipient, smtp_id, status, error, smtp_response, rt_ms)
+         VALUES ($1,$2,$3,$4,'delayed',$5,$6,$7)`,
+        [userId, campaignId, r.email, smtp.id, 'throttled: ' + msg, smtpResp, rtMs]
+      ).catch(() => {});
+      await query(
+        `UPDATE smtp_configs SET last_failed_at=now(), last_failed_error=$2 WHERE id=$1`,
+        [smtp.id, 'throttled: ' + msg]
+      ).catch(() => {});
+      logger.warn({ campaignId, recipientId, hits, retryAfterMs, msg }, 'smtp_throttled');
+      throw Object.assign(new Error('smtp_throttled:' + msg), { retryAfterMs });
+    }
+
+    // 2) Real failures (bounces / permanent errors).
+    const bounced = /^EENVELOPE$|^EMESSAGE$/.test(code) || /55[0-9]/.test(msg);
     await query(
       `UPDATE campaign_recipients
           SET status=$2, error=$3, smtp_id=$4, smtp_response=$5, updated_at=now()
@@ -212,15 +249,6 @@ async function handleJob(job: Job<SendJob>) {
       `UPDATE smtp_configs SET last_failed_at=now(), last_failed_error=$2 WHERE id=$1`,
       [smtp.id, msg]
     ).catch(() => {});
-    const throttleMs = detectSmtpThrottle(e);
-    if (throttleMs > 0) {
-      // SMTP rate-limited / soft fail — reset recipient to queued and back off
-      await query(
-        `UPDATE campaign_recipients SET status='queued', updated_at=now() WHERE id=$1`,
-        [recipientId]
-      ).catch(() => {});
-      throw Object.assign(new Error('smtp_throttled:' + msg), { retryAfterMs: throttleMs });
-    }
     if (!bounced && job.attemptsMade < (job.opts.attempts ?? 3)) {
       throw e; // let BullMQ retry with backoff
     }
