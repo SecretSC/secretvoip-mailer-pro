@@ -129,6 +129,15 @@ async function handleJob(job: Job<SendJob>) {
     company: r.company ?? '',
   };
 
+  // Per-user quota: skip and requeue if exhausted
+  const uq = await getUserQuota(userId).catch(() => null);
+  if (uq && uq.active && uq.exhausted) {
+    await query(
+      `UPDATE campaign_recipients SET status='queued', error='user_quota_exhausted', updated_at=now() WHERE id=$1`,
+      [recipientId]
+    );
+    throw Object.assign(new Error('user_quota_exhausted'), { retryAfterMs: 60_000 });
+  }
   // Global shared quota: skip and requeue if exhausted; count on success.
   const gq = await getGlobalQuota();
   if (gq.active && gq.exhausted) {
