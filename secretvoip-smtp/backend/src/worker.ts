@@ -369,6 +369,18 @@ setInterval(async () => {
       lastEffectiveEps = effEps;
     }
 
+    // Publish effective values so the API/UI can show them.
+    try {
+      await redis.set(
+        'smtp:worker:effective',
+        JSON.stringify({
+          factor: currentFactor, effConc, effEps, baseConc, baseEps,
+          hits, lastDegradeAt, at: Date.now(),
+        }),
+        'EX', 30
+      );
+    } catch {}
+
     if (currentFactor < 1.0 || hits > 0) {
       logger.info(
         { hits, factor: currentFactor, effConc, effEps, baseConc, baseEps },
