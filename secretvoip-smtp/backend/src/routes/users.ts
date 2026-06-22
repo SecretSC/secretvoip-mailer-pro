@@ -136,16 +136,72 @@ usersRouter.delete('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Per-user quota management (admin) ----------
+usersRouter.get('/:id/quota', async (req, res) => {
+  try {
+    const q = await getUserQuota(req.params.id);
+    res.json({ quota: q });
+  } catch (e: any) {
+    res.status(500).json({ error: 'quota_unavailable', message: e?.message ?? String(e) });
+  }
+});
+
+const quotaActionSchema = z.object({
+  action: z.enum(['set_total', 'add', 'set_used', 'reset_used']),
+  value: z.number().int().min(0).optional(),
+});
+usersRouter.post('/:id/quota', async (req, res) => {
+  const parsed = quotaActionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'invalid_quota', issues: parsed.error.issues.map(i => ({ path: i.path.join('.'), message: i.message })) });
+  }
+  const { action, value } = parsed.data;
+  // Ensure the user exists
+  const { rows: u } = await query<{ id: string }>(`SELECT id FROM users WHERE id=$1`, [req.params.id]);
+  if (!u[0]) return res.status(404).json({ error: 'not_found' });
+
+  try {
+    if (action === 'set_total') {
+      if (value === undefined) return res.status(400).json({ error: 'invalid_quota', message: 'value required' });
+      await setUserQuotaTotal(req.params.id, value);
+    } else if (action === 'add') {
+      if (value === undefined || value <= 0) return res.status(400).json({ error: 'invalid_quota', message: 'positive value required' });
+      await addUserQuota(req.params.id, value);
+    } else if (action === 'set_used') {
+      if (value === undefined) return res.status(400).json({ error: 'invalid_quota', message: 'value required' });
+      await setUserQuotaUsed(req.params.id, value);
+    } else if (action === 'reset_used') {
+      await resetUserQuotaUsed(req.params.id);
+    }
+    await audit(req, `users.quota.${action}`, req.params.id, { value: value ?? null });
+    const q = await getUserQuota(req.params.id);
+    res.json({ ok: true, quota: q });
+  } catch (e: any) {
+    res.status(500).json({ error: 'quota_update_failed', message: e?.message ?? String(e) });
+  }
+});
+
 // Admin: detailed client inspection
 usersRouter.get('/:id/details', async (req, res) => {
   const uid = req.params.id;
   const { rows: u } = await query(
     `SELECT id, username, role, status, created_at, notes,
             last_login_at, last_login_ip, last_active_at,
+            COALESCE(quota_total,0)::bigint AS quota_total,
+            COALESCE(quota_used,0)::bigint  AS quota_used,
+            quota_updated_at,
             (password_enc IS NOT NULL) AS password_visible
        FROM users WHERE id=$1`, [uid]
   );
   if (!u[0]) return res.status(404).json({ error: 'not_found' });
+  const qTotal = Number((u[0] as any).quota_total ?? 0);
+  const qUsed = Number((u[0] as any).quota_used ?? 0);
+  const quota = {
+    total: qTotal, used: qUsed,
+    remaining: qTotal > 0 ? Math.max(0, qTotal - qUsed) : 0,
+    active: qTotal > 0, exhausted: qTotal > 0 && qUsed >= qTotal,
+    updated_at: (u[0] as any).quota_updated_at ?? null,
+  };
 
   const { rows: smtpsRaw } = await query<any>(
     `SELECT id, name, host, port, username, password_enc, secure, starttls,
