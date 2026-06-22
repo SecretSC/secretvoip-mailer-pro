@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db';
 import { requireAuth, requirePasswordOk } from '../auth/middleware';
-import { getQuota } from '../lib/quota';
+import { getQuota, getUserQuota } from '../lib/quota';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth, requirePasswordOk);
@@ -9,6 +9,7 @@ dashboardRouter.use(requireAuth, requirePasswordOk);
 dashboardRouter.get('/', async (req, res) => {
   const uid = req.user!.sub;
   const quota = await getQuota(uid).catch(() => null); // legacy field, kept for back-compat
+  const user_quota = await getUserQuota(uid).catch(() => null);
 
   const { rows: stats } = await query<{ s: string }>(
     `SELECT COALESCE(SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END),0)::text AS s
@@ -39,6 +40,7 @@ dashboardRouter.get('/', async (req, res) => {
 
   res.json({
     quota,
+    user_quota,
     stats: {
       sent: totalSent,
       failed: totalFailed,

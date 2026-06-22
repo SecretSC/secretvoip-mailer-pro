@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import GlobalQuotaCard, { useGlobalQuota } from '../components/GlobalQuotaCard';
+import UserQuotaCard, { useUserQuota } from '../components/UserQuotaCard';
 
 interface Smtp { id: string; name: string; from_email: string; from_name: string; status: string }
 interface Template { id: string; name: string; subject: string; html: string; text: string }
@@ -50,6 +51,7 @@ export default function CampaignEditor() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const quota = useGlobalQuota();
+  const userQuota = useUserQuota();
 
   useEffect(() => {
     api<{ smtps: Smtp[] }>('/smtp').then(r => setSmtps(r.smtps.filter(s => s.status === 'active')));
@@ -137,7 +139,9 @@ export default function CampaignEditor() {
         no_smtp: 'Select at least one SMTP server.',
         no_active_smtp: 'The selected SMTP server is no longer active. Pick another in SMTP Servers.',
         no_recipients: 'Add at least one valid recipient.',
-        quota_exhausted: 'Global SMTP quota exhausted. Contact administrator.',
+        quota_exhausted: e?.message || 'Sending quota exhausted. Contact administrator.',
+        not_enough_quota: e?.message || 'Not enough quota for this campaign. Ask admin for more quota.',
+        invalid_quota: 'Invalid quota value.',
         worker_unavailable: 'Worker unavailable — queue could not accept the campaign. Try again or contact admin.',
         service_unavailable: 'Backend temporarily unreachable. Try again in a moment.',
         bad_state: m || 'Campaign cannot be started in its current state.',
@@ -173,6 +177,7 @@ export default function CampaignEditor() {
         </div>
       </div>
 
+      <UserQuotaCard />
       <GlobalQuotaCard />
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -249,6 +254,16 @@ export default function CampaignEditor() {
           </div>
 
           {err && <div className="card text-sm text-crimson-400">{err}</div>}
+          {userQuota?.exhausted && (
+            <div className="card text-sm text-crimson-300 border-crimson-500/30">
+              Your sending quota is exhausted. Contact administrator.
+            </div>
+          )}
+          {userQuota?.active && !userQuota.exhausted && parsed.valid.length > userQuota.remaining && (
+            <div className="card text-sm text-amber-300 border-amber-500/30">
+              Not enough quota: this campaign has {parsed.valid.length.toLocaleString()} recipients but you have only {userQuota.remaining.toLocaleString()} remaining.
+            </div>
+          )}
           {quota?.exhausted && (
             <div className="card text-sm text-crimson-300 border-crimson-500/30">
               Global SMTP quota exhausted. Contact administrator.
@@ -258,7 +273,13 @@ export default function CampaignEditor() {
           <div className="flex gap-2 flex-wrap">
             <button type="button" className="btn-ghost flex-1" onClick={() => setPreviewOpen(true)}>Preview</button>
             <button className="btn-ghost flex-1" disabled={saving} onClick={() => save(false)}>Save draft</button>
-            <button className="btn-primary w-full" disabled={saving || parsed.valid.length === 0 || smtpIds.length === 0 || quota?.exhausted}
+            <button className="btn-primary w-full"
+              disabled={
+                saving || parsed.valid.length === 0 || smtpIds.length === 0 ||
+                quota?.exhausted ||
+                userQuota?.exhausted ||
+                (userQuota?.active && parsed.valid.length > userQuota.remaining)
+              }
               onClick={() => save(true)}>Send Campaign</button>
           </div>
         </div>

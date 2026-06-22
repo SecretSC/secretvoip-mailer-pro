@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import GlobalQuotaCard from '../components/GlobalQuotaCard';
+import UserQuotaCard from '../components/UserQuotaCard';
 
 interface Dash {
   stats: { sent: number; failed: number; active_campaigns: number; smtp_servers: number; success_rate: number };
@@ -29,6 +30,7 @@ export default function Dashboard() {
         <p className="text-sm text-slate-400">Operational overview of your sending infrastructure.</p>
       </div>
 
+      <UserQuotaCard />
       <GlobalQuotaCard />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">

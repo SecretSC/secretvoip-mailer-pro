@@ -22,6 +22,10 @@ interface Details {
     notes?: string | null; last_login_at?: string | null; last_login_ip?: string | null;
     last_active_at?: string | null; password_visible?: boolean;
   };
+  quota?: {
+    total: number; used: number; remaining: number;
+    active: boolean; exhausted: boolean; updated_at: string | null;
+  };
   smtps: Smtp[];
   campaigns: any[];
   templates: any[];
@@ -133,6 +137,34 @@ export default function AdminClientDetails() {
           <Stat label="Last Audit Event" value={fmt(m.last_audit_at)} />
         </div>
       </Section>
+
+      {d.quota && (
+        <Section title="Sending Quota">
+          {!d.quota.active ? (
+            <div className="text-xs text-amber-300">
+              No quota assigned. Set one from the Users page (Manage Quota) to allow sending.
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <Stat label="Total" value={d.quota.total.toLocaleString()} />
+                <Stat label="Used" value={d.quota.used.toLocaleString()} />
+                <Stat label="Remaining" value={
+                  <span className={d.quota.exhausted ? 'text-crimson-400' : 'text-emerald-300'}>
+                    {d.quota.remaining.toLocaleString()}
+                  </span>
+                } />
+              </div>
+              {d.quota.exhausted && (
+                <div className="text-xs text-crimson-300 bg-crimson-500/10 border border-crimson-500/30 rounded-md px-2 py-1.5">
+                  Quota exhausted — this client cannot send until quota is increased.
+                </div>
+              )}
+            </>
+          )}
+        </Section>
+      )}
+
 
       <Section title="SMTP Servers (full configuration)">
         {d.smtps.length === 0 ? <div className="text-xs text-slate-500">None.</div> : (

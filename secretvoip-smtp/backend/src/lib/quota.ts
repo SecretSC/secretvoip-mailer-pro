@@ -95,3 +95,71 @@ export async function resetGlobalQuotaUsed() {
     `UPDATE settings SET global_quota_used=0, global_quota_reset_at=now(), updated_at=now() WHERE id=1`
   );
 }
+
+// ---------- Per-user quota (primary workflow) ----------
+export interface UserQuota {
+  total: number;
+  used: number;
+  remaining: number;
+  active: boolean;      // total > 0 => enforced
+  exhausted: boolean;   // active && remaining <= 0
+  updated_at: string | null;
+}
+
+export async function getUserQuota(userId: string): Promise<UserQuota> {
+  const { rows } = await query<{ total: string; used: string; updated_at: string | null }>(
+    `SELECT COALESCE(quota_total,0)::text AS total,
+            COALESCE(quota_used,0)::text  AS used,
+            quota_updated_at AS updated_at
+       FROM users WHERE id=$1`, [userId]
+  );
+  const r = rows[0] ?? { total: '0', used: '0', updated_at: null };
+  const total = parseInt(r.total, 10);
+  const used = parseInt(r.used, 10);
+  const remaining = total > 0 ? Math.max(0, total - used) : 0;
+  return {
+    total, used, remaining,
+    active: total > 0,
+    exhausted: total > 0 && used >= total,
+    updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+  };
+}
+
+/** Atomically reserve N from this user's quota. Returns true if reserved. */
+export async function reserveUserQuota(userId: string, n = 1): Promise<boolean> {
+  const { rows } = await query<{ ok: boolean }>(
+    `UPDATE users
+        SET quota_used = quota_used + $2, quota_updated_at = now(), updated_at = now()
+      WHERE id = $1
+        AND (quota_total = 0 OR quota_used + $2 <= quota_total)
+      RETURNING true AS ok`,
+    [userId, n]
+  );
+  return rows.length > 0;
+}
+
+export async function setUserQuotaTotal(userId: string, total: number) {
+  await query(
+    `UPDATE users SET quota_total=$2, quota_updated_at=now(), updated_at=now() WHERE id=$1`,
+    [userId, Math.max(0, Math.floor(total))]
+  );
+}
+export async function addUserQuota(userId: string, n: number) {
+  await query(
+    `UPDATE users SET quota_total = COALESCE(quota_total,0) + $2,
+                     quota_updated_at=now(), updated_at=now() WHERE id=$1`,
+    [userId, Math.max(0, Math.floor(n))]
+  );
+}
+export async function setUserQuotaUsed(userId: string, used: number) {
+  await query(
+    `UPDATE users SET quota_used=$2, quota_updated_at=now(), updated_at=now() WHERE id=$1`,
+    [userId, Math.max(0, Math.floor(used))]
+  );
+}
+export async function resetUserQuotaUsed(userId: string) {
+  await query(
+    `UPDATE users SET quota_used=0, quota_updated_at=now(), updated_at=now() WHERE id=$1`,
+    [userId]
+  );
+}

@@ -5,7 +5,7 @@ import { bullConnection, redis } from './redis';
 import { query } from './db';
 import { CAMPAIGN_QUEUE, SendJob } from './queue';
 import { buildTransport, renderTemplate, SmtpRow } from './lib/mailer';
-import { incrementUsage, reserveGlobalQuota, getGlobalQuota } from './lib/quota';
+import { incrementUsage, reserveGlobalQuota, getGlobalQuota, reserveUserQuota, getUserQuota } from './lib/quota';
 import { loadPerfSettings, getPerfSettingsSync } from './lib/perfSettings';
 
 // Detect SMTP throttling / rate-limit / soft-fail errors.
@@ -129,6 +129,15 @@ async function handleJob(job: Job<SendJob>) {
     company: r.company ?? '',
   };
 
+  // Per-user quota: skip and requeue if exhausted
+  const uq = await getUserQuota(userId).catch(() => null);
+  if (uq && uq.active && uq.exhausted) {
+    await query(
+      `UPDATE campaign_recipients SET status='queued', error='user_quota_exhausted', updated_at=now() WHERE id=$1`,
+      [recipientId]
+    );
+    throw Object.assign(new Error('user_quota_exhausted'), { retryAfterMs: 60_000 });
+  }
   // Global shared quota: skip and requeue if exhausted; count on success.
   const gq = await getGlobalQuota();
   if (gq.active && gq.exhausted) {
@@ -175,6 +184,7 @@ async function handleJob(job: Job<SendJob>) {
       `UPDATE smtp_configs SET last_success_at=now() WHERE id=$1`, [smtp.id]
     ).catch(() => {});
     await incrementUsage(userId, 1);
+    await reserveUserQuota(userId, 1).catch(() => {});
     await reserveGlobalQuota(1).catch(() => {});
   } catch (e: any) {
     const rtMs = Date.now() - startedAt;
