@@ -51,6 +51,7 @@ export default function CampaignEditor() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const quota = useGlobalQuota();
+  const userQuota = useUserQuota();
 
   useEffect(() => {
     api<{ smtps: Smtp[] }>('/smtp').then(r => setSmtps(r.smtps.filter(s => s.status === 'active')));
