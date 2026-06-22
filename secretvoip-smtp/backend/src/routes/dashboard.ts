@@ -9,6 +9,7 @@ dashboardRouter.use(requireAuth, requirePasswordOk);
 dashboardRouter.get('/', async (req, res) => {
   const uid = req.user!.sub;
   const quota = await getQuota(uid).catch(() => null); // legacy field, kept for back-compat
+  const user_quota = await getUserQuota(uid).catch(() => null);
 
   const { rows: stats } = await query<{ s: string }>(
     `SELECT COALESCE(SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END),0)::text AS s
