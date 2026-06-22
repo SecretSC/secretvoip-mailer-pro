@@ -18,13 +18,36 @@ usersRouter.get('/', async (req, res) => {
   const search = (req.query.search as string | undefined) ?? '';
   const { rows } = await query(
     `SELECT id, username, role, status, daily_limit, monthly_limit, balance, notes,
+            COALESCE(quota_total,0)::bigint AS quota_total,
+            COALESCE(quota_used,0)::bigint  AS quota_used,
+            quota_updated_at,
             created_at, last_login_at, last_login_ip, last_active_at
        FROM users
       WHERE ($1 = '' OR username ILIKE '%' || $1 || '%')
       ORDER BY created_at DESC LIMIT 500`,
     [search]
   );
-  res.json({ users: rows });
+  const users = rows.map((u: any) => {
+    const total = Number(u.quota_total ?? 0);
+    const used = Number(u.quota_used ?? 0);
+    return {
+      ...u,
+      quota_total: total,
+      quota_used: used,
+      quota_remaining: total > 0 ? Math.max(0, total - used) : 0,
+    };
+  });
+  res.json({ users });
+});
+
+const createSchema = z.object({
+  username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
+  password: z.string().min(8).max(256),
+  daily_limit: z.number().int().min(0).optional(),
+  monthly_limit: z.number().int().min(0).optional(),
+  balance: z.number().int().min(0).optional(),
+  notes: z.string().max(2000).optional(),
+  initial_quota: z.number().int().min(0).optional(),
 });
 
 const createSchema = z.object({
