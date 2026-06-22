@@ -40,6 +40,7 @@ dashboardRouter.get('/', async (req, res) => {
 
   res.json({
     quota,
+    user_quota,
     stats: {
       sent: totalSent,
       failed: totalFailed,
