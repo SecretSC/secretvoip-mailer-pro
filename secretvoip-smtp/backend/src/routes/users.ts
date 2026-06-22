@@ -50,15 +50,6 @@ const createSchema = z.object({
   initial_quota: z.number().int().min(0).optional(),
 });
 
-const createSchema = z.object({
-  username: z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/),
-  password: z.string().min(8).max(256),
-  daily_limit: z.number().int().min(0).optional(),
-  monthly_limit: z.number().int().min(0).optional(),
-  balance: z.number().int().min(0).optional(),
-  notes: z.string().max(2000).optional(),
-});
-
 usersRouter.post('/', async (req, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_input', detail: parsed.error.format() });
@@ -68,14 +59,16 @@ usersRouter.post('/', async (req, res) => {
   const daily = v.daily_limit ?? env.DEFAULT_DAILY_LIMIT;
   const monthly = v.monthly_limit ?? env.DEFAULT_MONTHLY_LIMIT;
   const balance = v.balance ?? 0;
+  const quotaTotal = Math.max(0, Math.floor(v.initial_quota ?? 0));
   try {
     const { rows } = await query<{ id: string }>(
-      `INSERT INTO users (username, password_hash, password_enc, role, force_password_change, daily_limit, monthly_limit, balance, notes)
-       VALUES ($1,$2,$3,'client', true, $4,$5,$6,$7) RETURNING id`,
-      [v.username, hash, pwEnc, daily, monthly, balance, v.notes ?? null]
+      `INSERT INTO users (username, password_hash, password_enc, role, force_password_change,
+                          daily_limit, monthly_limit, balance, notes, quota_total, quota_used, quota_updated_at)
+       VALUES ($1,$2,$3,'client', true, $4,$5,$6,$7, $8, 0, now()) RETURNING id`,
+      [v.username, hash, pwEnc, daily, monthly, balance, v.notes ?? null, quotaTotal]
     );
-    await audit(req, 'users.create', rows[0].id, { username: v.username });
-    res.status(201).json({ id: rows[0].id, username: v.username, password: v.password });
+    await audit(req, 'users.create', rows[0].id, { username: v.username, initial_quota: quotaTotal });
+    res.status(201).json({ id: rows[0].id, username: v.username, password: v.password, quota_total: quotaTotal });
   } catch (e: any) {
     if (e?.code === '23505') return res.status(409).json({ error: 'username_taken' });
     throw e;
