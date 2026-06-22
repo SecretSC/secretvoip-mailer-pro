@@ -121,11 +121,12 @@ export default function TransmissionLog() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
         <Card label="Total" value={summary?.total ?? 0} />
         <Card label="Accepted" value={summary?.accepted ?? 0} tone="text-emerald-300" />
-        <Card label="Failed" value={(summary?.failed ?? 0) + (summary?.bounced ?? 0)} tone="text-crimson-400" />
-        <Card label="Invalid" value={summary?.invalid ?? 0} tone="text-crimson-400" />
+        <Card label="Failed" value={summary?.failed ?? 0} tone="text-crimson-400" />
+        <Card label="Bounced" value={summary?.bounced ?? 0} tone="text-crimson-400" />
+        <Card label="Delayed" value={summary?.delayed ?? 0} tone="text-sky-300" />
         <Card label="Queued" value={summary?.queued ?? 0} tone="text-amber-300" />
         <Card label="Processing" value={summary?.processing ?? 0} tone="text-amber-300" />
       </div>
