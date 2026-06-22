@@ -205,6 +205,12 @@ async function handleJob(job: Job<SendJob>) {
         hits = await redis.incr(k);
         if (hits === 1) await redis.expire(k, 60);
       } catch {}
+      // Global throttle counter (sliding 60s) — drives runtime EPS reduction.
+      try {
+        const gk = 'smtp:throttle:hits:global';
+        const g = await redis.incr(gk);
+        if (g === 1) await redis.expire(gk, 60);
+      } catch {}
       // Multiplier scales 1x..6x based on recent throttle pressure.
       const mult = Math.min(6, 1 + Math.floor(hits / 10));
       const retryAfterMs = baseThrottleMs * mult;
