@@ -354,6 +354,17 @@ campaignsRouter.post('/:id/start', async (req, res) => {
       `SELECT id FROM campaign_recipients WHERE campaign_id=$1 AND status IN ('queued','delayed')`,
       [c.id]
     );
+
+    // Per-user quota: ensure remaining quota covers pending recipients
+    if (uq && uq.active && pending.length > uq.remaining) {
+      await query(`UPDATE campaigns SET status='draft', updated_at=now() WHERE id=$1`, [c.id]).catch(() => {});
+      return res.status(403).json({
+        error: 'not_enough_quota',
+        message: `Not enough quota. You have ${uq.remaining.toLocaleString()} remaining but this campaign has ${pending.length.toLocaleString()} pending recipients. Ask admin for more quota.`,
+        quota: { ...uq, needed: pending.length },
+      });
+    }
+
     const jobs = pending.map(p => ({
       name: 'send',
       data: { recipientId: p.id, campaignId: c.id, userId: req.user!.sub },
