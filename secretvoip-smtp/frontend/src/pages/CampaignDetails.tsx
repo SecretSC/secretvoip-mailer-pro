@@ -49,6 +49,7 @@ export default function CampaignDetails() {
   const [b, setB] = useState<Breakdown | null>(null);
   const [busy, setBusy] = useState(false);
   const [perf, setPerf] = useState<PerfInfo | null>(null);
+  const [worker, setWorker] = useState<{ factor: number; effConc: number; effEps: number; baseConc: number; baseEps: number; hits: number } | null>(null);
   // Speed sampling: rolling samples of (timestamp, accepted, failed)
   const samples = useRef<Array<{ t: number; acc: number; fail: number }>>([]);
   const [speed, setSpeed] = useState({ acceptedPerMin: 0, failedPerMin: 0, etaSec: 0 });
@@ -85,6 +86,15 @@ export default function CampaignDetails() {
       max_smtp_connections: r.settings.max_smtp_connections ?? 50,
       queue_batch_size:     r.settings.queue_batch_size     ?? 500,
     })).catch(() => {});
+  }, []);
+  useEffect(() => {
+    async function pollWorker() {
+      try {
+        const r = await api<{ worker_effective: any }>('/settings/worker');
+        if (r.worker_effective) setWorker(r.worker_effective);
+      } catch {}
+    }
+    pollWorker(); const t = setInterval(pollWorker, 5000); return () => clearInterval(t);
   }, []);
 
   async function action(name: 'start' | 'pause' | 'resume' | 'stop') {
