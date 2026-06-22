@@ -295,6 +295,15 @@ campaignsRouter.post('/:id/start', async (req, res) => {
     if (!c.smtp_ids?.length) {
       return res.status(400).json({ error: 'no_smtp', message: 'Select at least one SMTP server.' });
     }
+    // Per-user quota check (primary quota workflow)
+    const uq = await getUserQuota(req.user!.sub).catch(() => null);
+    if (uq && uq.active && uq.exhausted) {
+      return res.status(403).json({
+        error: 'quota_exhausted',
+        message: 'Your sending quota is exhausted. Contact administrator.',
+        quota: uq,
+      });
+    }
     // Verify the selected SMTPs still exist and are active for this user
     const { rows: smtpCheck } = await query<{ n: string }>(
       `SELECT COUNT(*)::text AS n FROM smtp_configs
