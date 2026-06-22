@@ -152,13 +152,14 @@ export default function CampaignDetails() {
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid sm:grid-cols-3 lg:grid-cols-7 gap-3">
         <Counter label="Total" value={c.total} />
         <Counter label="Accepted" value={accepted} tone="text-emerald-300" />
-        <Counter label="Failed" value={c.failed + c.bounced} tone="text-crimson-400" />
+        <Counter label="Failed" value={c.failed} tone="text-crimson-400" />
+        <Counter label="Bounced" value={c.bounced} tone="text-crimson-400" />
+        <Counter label="Delayed / Throttled" value={b.delayed} tone="text-sky-300" />
         <Counter label="Queued" value={b.queued} tone="text-amber-300" />
         <Counter label="Processing" value={b.processing} tone="text-amber-300" />
-        <Counter label="Cancelled" value={b.cancelled} tone="text-slate-400" />
       </div>
 
       <div className="card">
