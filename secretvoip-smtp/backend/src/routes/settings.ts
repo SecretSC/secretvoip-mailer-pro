@@ -1,11 +1,19 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db';
+import { redis } from '../redis';
 import { requireAuth, requirePasswordOk, requireRole } from '../auth/middleware';
 import { audit } from '../lib/audit';
 import { getGlobalQuota, setGlobalQuotaTotal, resetGlobalQuotaUsed } from '../lib/quota';
 
 export const settingsRouter = Router();
+
+async function getWorkerEffective() {
+  try {
+    const v = await redis.get('smtp:worker:effective');
+    return v ? JSON.parse(v) : null;
+  } catch { return null; }
+}
 
 // Everyone (authenticated) reads settings + global quota
 settingsRouter.get('/', requireAuth, requirePasswordOk, async (_req, res) => {
@@ -16,12 +24,18 @@ settingsRouter.get('/', requireAuth, requirePasswordOk, async (_req, res) => {
        FROM settings WHERE id=1`
   );
   const quota = await getGlobalQuota();
-  res.json({ settings: rows[0], quota });
+  const worker_effective = await getWorkerEffective();
+  res.json({ settings: rows[0], quota, worker_effective });
 });
 
 // Lightweight quota endpoint (every authenticated user can poll cheaply)
 settingsRouter.get('/quota', requireAuth, requirePasswordOk, async (_req, res) => {
   res.json({ quota: await getGlobalQuota() });
+});
+
+// Runtime worker state (effective EPS/concurrency under throttling)
+settingsRouter.get('/worker', requireAuth, requirePasswordOk, async (_req, res) => {
+  res.json({ worker_effective: await getWorkerEffective() });
 });
 
 const schema = z.object({

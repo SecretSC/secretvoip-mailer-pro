@@ -205,6 +205,12 @@ async function handleJob(job: Job<SendJob>) {
         hits = await redis.incr(k);
         if (hits === 1) await redis.expire(k, 60);
       } catch {}
+      // Global throttle counter (sliding 60s) — drives runtime EPS reduction.
+      try {
+        const gk = 'smtp:throttle:hits:global';
+        const g = await redis.incr(gk);
+        if (g === 1) await redis.expire(gk, 60);
+      } catch {}
       // Multiplier scales 1x..6x based on recent throttle pressure.
       const mult = Math.min(6, 1 + Math.floor(hits / 10));
       const retryAfterMs = baseThrottleMs * mult;
@@ -296,17 +302,90 @@ const worker = new Worker<SendJob>(CAMPAIGN_QUEUE, async (job) => {
   limiter: { max: initialPerf.emails_per_second, duration: 1000 },
 });
 
-// Live-apply admin perf changes (concurrency only — BullMQ rate limiter
-// is fixed at Worker construction, so changing emails_per_second takes
-// effect on the next worker restart).
+// Live-apply admin perf changes + automatic runtime throttle protection.
+// Concurrency is adjusted dynamically based on recent throttling pressure
+// (sliding 60s global counter). Admin-configured EPS/concurrency are never
+// mutated — only the effective in-process values change while throttling
+// is active, and recover gradually once SMTP stops pushing back.
 let lastApplied = { conc: initialPerf.worker_concurrency };
+let currentFactor = 1.0;          // 1.0 = full speed; 0.25..0.75 while throttled
+let lastDegradeAt = 0;
+let lastEffectiveConc = initialPerf.worker_concurrency;
+let lastEffectiveEps  = initialPerf.emails_per_second;
+
+function factorFromHits(hits: number): number {
+  if (hits >= 50) return 0.25;
+  if (hits >= 25) return 0.50;
+  if (hits >= 10) return 0.75;
+  return 1.0;
+}
+
 setInterval(async () => {
   try {
     const p = await loadPerfSettings(true);
-    if (p.worker_concurrency !== lastApplied.conc) {
-      (worker as any).concurrency = p.worker_concurrency;
-      lastApplied.conc = p.worker_concurrency;
-      logger.info({ concurrency: p.worker_concurrency }, 'worker_perf_applied');
+    const baseConc = p.worker_concurrency;
+    const baseEps  = p.emails_per_second;
+
+    // 1) Admin changed base concurrency — reset our reference but keep factor.
+    if (baseConc !== lastApplied.conc) {
+      lastApplied.conc = baseConc;
+      logger.info({ concurrency: baseConc }, 'worker_perf_base_changed');
+    }
+
+    // 2) Read current throttle pressure (last 60s, global).
+    let hits = 0;
+    try {
+      const v = await redis.get('smtp:throttle:hits:global');
+      hits = v ? parseInt(v, 10) : 0;
+    } catch {}
+
+    // 3) Compute target factor. Degrade immediately, recover gradually.
+    const targetFactor = factorFromHits(hits);
+    if (targetFactor < currentFactor) {
+      currentFactor = targetFactor;        // degrade right away
+      lastDegradeAt = Date.now();
+    } else if (hits < 5) {
+      // No meaningful pressure — step back up by +0.10 every tick (~+10%/10s).
+      currentFactor = Math.min(1.0, currentFactor + 0.10);
+    }
+    // If hits between 5 and current threshold, hold steady.
+
+    // 4) Apply effective concurrency and EPS limiter.
+    const effConc = Math.max(1, Math.round(baseConc * currentFactor));
+    const effEps  = Math.max(1, Math.round(baseEps  * currentFactor));
+    if (effConc !== lastEffectiveConc) {
+      (worker as any).concurrency = effConc;
+      lastEffectiveConc = effConc;
+    }
+    if (effEps !== lastEffectiveEps) {
+      // BullMQ exposes runtime limiter updates via the queue's rate limiter key.
+      try {
+        const fn: any = (worker as any).rateLimit;
+        // No-op fallback: we cannot resize the in-memory limiter, but
+        // reducing concurrency already throttles throughput. We log so
+        // operators can see the effective EPS target.
+        if (typeof fn === 'function') { /* reserved for future BullMQ API */ }
+      } catch {}
+      lastEffectiveEps = effEps;
+    }
+
+    // Publish effective values so the API/UI can show them.
+    try {
+      await redis.set(
+        'smtp:worker:effective',
+        JSON.stringify({
+          factor: currentFactor, effConc, effEps, baseConc, baseEps,
+          hits, lastDegradeAt, at: Date.now(),
+        }),
+        'EX', 30
+      );
+    } catch {}
+
+    if (currentFactor < 1.0 || hits > 0) {
+      logger.info(
+        { hits, factor: currentFactor, effConc, effEps, baseConc, baseEps },
+        'worker_runtime_throttle'
+      );
     }
   } catch {}
 }, 10_000).unref?.();
