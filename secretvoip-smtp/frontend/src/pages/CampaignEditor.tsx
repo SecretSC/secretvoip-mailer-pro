@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import GlobalQuotaCard, { useGlobalQuota } from '../components/GlobalQuotaCard';
+import UserQuotaCard, { useUserQuota } from '../components/UserQuotaCard';
 
 interface Smtp { id: string; name: string; from_email: string; from_name: string; status: string }
 interface Template { id: string; name: string; subject: string; html: string; text: string }
