@@ -184,6 +184,7 @@ async function handleJob(job: Job<SendJob>) {
       `UPDATE smtp_configs SET last_success_at=now() WHERE id=$1`, [smtp.id]
     ).catch(() => {});
     await incrementUsage(userId, 1);
+    await reserveUserQuota(userId, 1).catch(() => {});
     await reserveGlobalQuota(1).catch(() => {});
   } catch (e: any) {
     const rtMs = Date.now() - startedAt;
