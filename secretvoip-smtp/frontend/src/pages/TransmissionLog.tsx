@@ -11,6 +11,7 @@ interface Row {
 interface Summary {
   total: number; accepted: number; delivered: number; failed: number;
   bounced: number; invalid: number; queued: number; processing: number; rejected: number;
+  delayed?: number;
 }
 interface CampaignLite { id: string; name: string }
 interface SmtpLite { id: string; name: string }
@@ -20,11 +21,13 @@ const STATUS_OPTIONS = [
   ['delivered', 'Accepted'],
   ['failed', 'Failed'],
   ['bounced', 'Bounced'],
+  ['delayed', 'Delayed / Throttled'],
   ['invalid', 'Invalid'],
 ];
 
 function statusLabel(s: string) {
   if (s === 'delivered') return 'Accepted';
+  if (s === 'delayed') return 'Delayed / Throttled';
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 function statusClass(s: string) {
