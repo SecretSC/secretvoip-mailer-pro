@@ -6,7 +6,7 @@ import { audit } from '../lib/audit';
 import { campaignQueue, queueEventsState } from '../queue';
 import { redis, bullConnection } from '../redis';
 import { buildTransport, renderTemplate } from '../lib/mailer';
-import { getGlobalQuota } from '../lib/quota';
+import { getGlobalQuota, getUserQuota } from '../lib/quota';
 import { loadPerfSettings } from '../lib/perfSettings';
 
 export const campaignsRouter = Router();
