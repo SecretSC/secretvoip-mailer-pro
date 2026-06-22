@@ -211,10 +211,9 @@ async function handleJob(job: Job<SendJob>) {
 
       await query(
         `UPDATE campaign_recipients
-            SET status='delayed', error=$3, smtp_id=$4, smtp_response=$5, updated_at=now()
-          WHERE id=$1 AND id=$1 /* keep param shape */
-            AND TRUE`,
-        [recipientId, null, 'throttled: ' + msg, smtp.id, smtpResp]
+            SET status='delayed', error=$2, smtp_id=$3, smtp_response=$4, updated_at=now()
+          WHERE id=$1`,
+        [recipientId, 'throttled: ' + msg, smtp.id, smtpResp]
       ).catch(() => {});
       await query(
         `INSERT INTO email_logs (user_id, campaign_id, recipient, smtp_id, status, error, smtp_response, rt_ms)
