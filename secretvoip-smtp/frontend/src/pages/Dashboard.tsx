@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import GlobalQuotaCard from '../components/GlobalQuotaCard';
+import UserQuotaCard from '../components/UserQuotaCard';
 
 interface Dash {
   stats: { sent: number; failed: number; active_campaigns: number; smtp_servers: number; success_rate: number };
