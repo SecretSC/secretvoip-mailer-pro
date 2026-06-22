@@ -254,6 +254,16 @@ export default function CampaignEditor() {
           </div>
 
           {err && <div className="card text-sm text-crimson-400">{err}</div>}
+          {userQuota?.exhausted && (
+            <div className="card text-sm text-crimson-300 border-crimson-500/30">
+              Your sending quota is exhausted. Contact administrator.
+            </div>
+          )}
+          {userQuota?.active && !userQuota.exhausted && parsed.valid.length > userQuota.remaining && (
+            <div className="card text-sm text-amber-300 border-amber-500/30">
+              Not enough quota: this campaign has {parsed.valid.length.toLocaleString()} recipients but you have only {userQuota.remaining.toLocaleString()} remaining.
+            </div>
+          )}
           {quota?.exhausted && (
             <div className="card text-sm text-crimson-300 border-crimson-500/30">
               Global SMTP quota exhausted. Contact administrator.
@@ -263,7 +273,13 @@ export default function CampaignEditor() {
           <div className="flex gap-2 flex-wrap">
             <button type="button" className="btn-ghost flex-1" onClick={() => setPreviewOpen(true)}>Preview</button>
             <button className="btn-ghost flex-1" disabled={saving} onClick={() => save(false)}>Save draft</button>
-            <button className="btn-primary w-full" disabled={saving || parsed.valid.length === 0 || smtpIds.length === 0 || quota?.exhausted}
+            <button className="btn-primary w-full"
+              disabled={
+                saving || parsed.valid.length === 0 || smtpIds.length === 0 ||
+                quota?.exhausted ||
+                userQuota?.exhausted ||
+                (userQuota?.active && parsed.valid.length > userQuota.remaining)
+              }
               onClick={() => save(true)}>Send Campaign</button>
           </div>
         </div>
