@@ -182,11 +182,21 @@ export default function CampaignDetails() {
             <div className="text-2xl font-semibold tabular-nums text-white">{formatEta(speed.etaSec)}</div>
           </div>
           <Counter label="Active connections" value={Math.min(b.processing, perf?.max_smtp_connections ?? 0) || b.processing} tone="text-sky-300" />
-          <Counter label="Rate limit (eps)" value={perf?.emails_per_second ?? 0} tone="text-slate-300" />
+          <Counter
+            label={worker && worker.factor < 1 ? `Effective EPS (throttled ${Math.round(worker.factor * 100)}%)` : 'Rate limit (eps)'}
+            value={worker?.effEps ?? perf?.emails_per_second ?? 0}
+            tone={worker && worker.factor < 1 ? 'text-amber-300' : 'text-slate-300'}
+          />
         </div>
+        {worker && worker.factor < 1 && (
+          <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] text-amber-200">
+            SMTP throttling detected ({worker.hits} hits/60s). Send rate temporarily reduced to
+            {' '}{worker.effEps}/s · concurrency {worker.effConc} (base {worker.baseEps}/s · {worker.baseConc}). Will gradually restore when throttling subsides.
+          </div>
+        )}
         {perf && (
           <div className="text-[11px] text-slate-500 mt-3">
-            Worker concurrency {perf.worker_concurrency} · Max SMTP connections {perf.max_smtp_connections} · Batch {perf.queue_batch_size}
+            Worker concurrency {worker?.effConc ?? perf.worker_concurrency}{worker && worker.factor < 1 ? ` of ${perf.worker_concurrency}` : ''} · Max SMTP connections {perf.max_smtp_connections} · Batch {perf.queue_batch_size}
           </div>
         )}
       </div>
